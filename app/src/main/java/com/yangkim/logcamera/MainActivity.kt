@@ -118,6 +118,9 @@ class MainActivity : Activity(), CameraController.Listener {
         currentLook = store.selected()
 
         renderer = GlRenderer()
+        renderer.onCurveIgnored = {
+            runOnUiThread { toast("이 카메라는 로그 커브를 무시해서 화면 변환 방식으로 바꿨어요") }
+        }
         renderer.start {
             runOnUiThread {
                 surfaceTextureReady = true

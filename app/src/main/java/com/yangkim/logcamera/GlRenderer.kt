@@ -71,6 +71,13 @@ class GlRenderer {
     @Volatile var displayRotation = 0
     /** 0 = 카메라가 이미 로그 커브로 출력, 1 = 일반 감마 → 셰이더에서 로그로 변환 */
     @Volatile var inputMode = 0
+    /** 카메라가 로그 커브를 받아들인다고 해놓고 실제로 무시하면 호출 */
+    var onCurveIgnored: (() -> Unit)? = null
+    private var frameCounter = 0
+    private var probeFbo = 0
+    private var probeTex = 0
+    private val probeBuf: ByteBuffer = ByteBuffer.allocateDirect(PROBE_W * PROBE_H * 4).order(ByteOrder.nativeOrder())
+    @Volatile private var forceRaw = false
     @Volatile var lutOn = true
     /**
      * 카메라가 넘겨주는 영상에 이미 센서 회전이 들어가 있는지.
@@ -101,6 +108,7 @@ class GlRenderer {
 
     fun configure(w: Int, h: Int, sensor: Int, front: Boolean) = runSync {
         frameW = w; frameH = h; sensorOrientation = sensor; isFront = front
+        frameCounter = 0
         if (!released) surfaceTexture.setDefaultBufferSize(w, h)
     }
 
@@ -270,6 +278,9 @@ class GlRenderer {
                 EGL14.eglSwapBuffers(display, encoder)
             }
 
+            frameCounter++
+            if (inputMode == 0 && frameCounter > 20 && frameCounter % 30 == 0) probeCurve()
+
             val cb = pendingPhoto
             if (cb != null) {
                 pendingPhoto = null
@@ -317,8 +328,8 @@ class GlRenderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
         GLES30.glUniform1i(uLut, 1)
-        GLES30.glUniform1i(uInputMode, inputMode)
-        GLES30.glUniform1i(uLutOn, if (lutOn) 1 else 0)
+        GLES30.glUniform1i(uInputMode, if (forceRaw) 0 else inputMode)
+        GLES30.glUniform1i(uLutOn, if (lutOn && !forceRaw) 1 else 0)
         GLES30.glUniform1f(uLutSize, lutSize.toFloat())
         GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
         GLES30.glUniformMatrix4fv(uMvp, 1, false, mvp, 0)
@@ -327,6 +338,49 @@ class GlRenderer {
         GLES30.glEnableVertexAttribArray(aTex)
         GLES30.glVertexAttribPointer(aTex, 2, GLES30.GL_FLOAT, false, 0, texCoords)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    /**
+     * 로그 커브가 정말 적용됐는지 확인: 진짜 로그면 가장 어두운 곳도 0.09 아래로 안 내려감.
+     * 아주 까만 점이 꽤 있으면 카메라가 커브를 무시한 것 → 화면 변환 방식으로 전환.
+     */
+    private fun probeCurve() {
+        if (probeFbo == 0) {
+            val t = IntArray(1)
+            GLES30.glGenTextures(1, t, 0)
+            probeTex = t[0]
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, probeTex)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, PROBE_W, PROBE_H, 0,
+                GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+            val f = IntArray(1)
+            GLES30.glGenFramebuffers(1, f, 0)
+            probeFbo = f[0]
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, probeFbo)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D, probeTex, 0)
+        }
+        makeCurrent(pbuffer)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, probeFbo)
+        GLES30.glViewport(0, 0, PROBE_W, PROBE_H)
+        forceRaw = true
+        draw(identity)
+        forceRaw = false
+        probeBuf.clear()
+        GLES30.glReadPixels(0, 0, PROBE_W, PROBE_H, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, probeBuf)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        var dark = 0
+        for (i in 0 until PROBE_W * PROBE_H) {
+            val r = probeBuf.get(i * 4).toInt() and 0xFF
+            val g = probeBuf.get(i * 4 + 1).toInt() and 0xFF
+            val b = probeBuf.get(i * 4 + 2).toInt() and 0xFF
+            if (maxOf(r, g, b) < 12) dark++
+        }
+        if (dark > PROBE_W * PROBE_H / 50) {
+            inputMode = 1
+            onCurveIgnored?.invoke()
+        }
     }
 
     /** 녹화와 같은 1080p 프레임을 비트맵으로 (위아래 뒤집힌 상태 — 호출 측에서 보정). */
@@ -381,6 +435,8 @@ class GlRenderer {
     companion object {
         private const val TAG = "LogCamera"
         private const val EGL_RECORDABLE_ANDROID = 0x3142
+        private const val PROBE_W = 64
+        private const val PROBE_H = 36
 
         private fun floatBuffer(a: FloatArray): FloatBuffer =
             ByteBuffer.allocateDirect(a.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -410,7 +466,7 @@ uniform float uLutSize;
 in vec2 vTex;
 out vec4 outColor;
 const float K = 20.0;
-vec3 toLog(vec3 lin) { return log2(1.0 + K * lin) / log2(1.0 + K); }
+vec3 toLog(vec3 lin) { return 0.09 + 0.69 * log2(1.0 + K * lin) / log2(1.0 + K); }
 void main() {
     vec3 c = texture(uCam, vTex).rgb;
     if (uInputMode == 1) {

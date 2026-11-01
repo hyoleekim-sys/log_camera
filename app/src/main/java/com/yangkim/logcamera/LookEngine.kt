@@ -18,8 +18,15 @@ object LookEngine {
     private val LOG_NORM = ln(1f + K)
     const val LUT_SIZE = 33
 
-    fun logEncode(x: Float): Float = ln(1f + K * max(x, 0f)) / LOG_NORM
-    fun logDecode(y: Float): Float = (exp(y * LOG_NORM) - 1f) / K
+    /** 진짜 로그처럼: 검정은 0.09로 띄우고, 흰색은 0.78까지만 → 밋밋한 회색 화면. 중간 회색 ≈ 0.44 */
+    const val LOG_BLACK = 0.09f
+    const val LOG_SCALE = 0.69f
+
+    fun logEncode(x: Float): Float = LOG_BLACK + LOG_SCALE * ln(1f + K * max(x, 0f)) / LOG_NORM
+    fun logDecode(y: Float): Float {
+        val t = max(y - LOG_BLACK, 0f) / LOG_SCALE
+        return (exp(t * LOG_NORM) - 1f) / K
+    }
 
     private fun smooth(e0: Float, e1: Float, x: Float): Float {
         val t = ((x - e0) / (e1 - e0)).coerceIn(0f, 1f)
