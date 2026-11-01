@@ -95,15 +95,28 @@ object LookEngine {
             var h = hsv[0]
             var s = hsv[1]
             var v = hsv[2]
-            var dh = abs(h - 0.07f)
-            dh = min(dh, 1f - dh)
-            val skinW = exp(-(dh / 0.05f) * (dh / 0.05f)) *
-                smooth(0.06f, 0.2f, s) * (1f - smooth(0.7f, 0.95f, s)) *
-                smooth(0.08f, 0.25f, v) * p.skin
+            val chroma = smooth(0.05f, 0.2f, s)
+            // 피부 영역(주황 계열)
+            val skinMask = band(h, 0.07f, 0.05f) * chroma *
+                (1f - smooth(0.7f, 0.95f, s)) * smooth(0.08f, 0.25f, v)
+            val skinW = skinMask * p.skin
+            // 색상별 영역
+            val wRed = band(h, 0.0f, 0.045f) * chroma
+            val wGreen = band(h, 0.33f, 0.09f) * chroma
+            val wBlue = band(h, 0.6f, 0.08f) * chroma
+            // 채도: 전체 → 색상별 → 피부 보호
             val skinSat = 1f + (p.saturation - 1f) * 0.35f
             s *= p.saturation + (skinSat - p.saturation) * skinW
+            s *= 1f + (p.redSat - 1f) * wRed
+            s *= 1f + (p.greenSat - 1f) * wGreen
+            s *= 1f + (p.blueSat - 1f) * wBlue
             s *= 1f - 0.12f * skinW
-            var diff = 0.07f - h
+            // 색상 이동
+            h += -p.greenHue * 0.035f * wGreen
+            h += p.blueHue * 0.03f * wBlue
+            h += -p.skinHue * 0.012f * skinMask
+            val target = 0.07f - 0.012f * p.skinHue
+            var diff = target - h
             if (diff > 0.5f) diff -= 1f
             if (diff < -0.5f) diff += 1f
             h += diff * 0.4f * skinW
@@ -116,6 +129,14 @@ object LookEngine {
             out[o++] = tmp[2]
         }
         return out
+    }
+
+    /** 색상환 위 가우시안 가중치. */
+    private fun band(h: Float, center: Float, width: Float): Float {
+        var d = abs(h - center)
+        d = min(d, 1f - d)
+        val x = d / width
+        return exp(-x * x)
     }
 
     private fun rgbToHsv(r: Float, g: Float, b: Float, out: FloatArray) {

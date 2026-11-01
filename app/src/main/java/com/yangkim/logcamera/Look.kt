@@ -12,12 +12,20 @@ data class LookParams(
     var fade: Float = 0f,         // 0..1   블랙 띄우기
     var shadowWarm: Float = 0f,   // -1..1  암부 따뜻하게 (- 차갑게)
     var saturation: Float = 1f,   // 0..1.6
-    var skin: Float = 0.5f        // 0..1   피부톤 보호
+    var skin: Float = 0.5f,       // 0..1   피부톤 보호
+    var skinHue: Float = 0f,      // -1..1  피부 (+ 붉게·혈색 / - 노랗게)
+    var redSat: Float = 1f,       // 0..1.6 빨강 채도
+    var greenHue: Float = 0f,     // -1..1  초록 (+ 노란 쪽 / - 청록 쪽)
+    var greenSat: Float = 1f,     // 0..1.6 초록 채도
+    var blueHue: Float = 0f,      // -1..1  파랑 (+ 보라 쪽 / - 청록 쪽)
+    var blueSat: Float = 1f       // 0..1.6 파랑 채도
 ) {
     fun setFrom(o: LookParams) {
         exposure = o.exposure; warmth = o.warmth; tint = o.tint; contrast = o.contrast
         rolloff = o.rolloff; fade = o.fade; shadowWarm = o.shadowWarm
         saturation = o.saturation; skin = o.skin
+        skinHue = o.skinHue; redSat = o.redSat; greenHue = o.greenHue
+        greenSat = o.greenSat; blueHue = o.blueHue; blueSat = o.blueSat
     }
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -30,6 +38,12 @@ data class LookParams(
         put("shadowWarm", shadowWarm.toDouble())
         put("saturation", saturation.toDouble())
         put("skin", skin.toDouble())
+        put("skinHue", skinHue.toDouble())
+        put("redSat", redSat.toDouble())
+        put("greenHue", greenHue.toDouble())
+        put("greenSat", greenSat.toDouble())
+        put("blueHue", blueHue.toDouble())
+        put("blueSat", blueSat.toDouble())
     }
 
     companion object {
@@ -46,7 +60,13 @@ data class LookParams(
                 fade = o.optDouble("fade", d.fade.toDouble()).toFloat(),
                 shadowWarm = o.optDouble("shadowWarm", d.shadowWarm.toDouble()).toFloat(),
                 saturation = o.optDouble("saturation", d.saturation.toDouble()).toFloat(),
-                skin = o.optDouble("skin", d.skin.toDouble()).toFloat()
+                skin = o.optDouble("skin", d.skin.toDouble()).toFloat(),
+                skinHue = o.optDouble("skinHue", 0.0).toFloat(),
+                redSat = o.optDouble("redSat", 1.0).toFloat(),
+                greenHue = o.optDouble("greenHue", 0.0).toFloat(),
+                greenSat = o.optDouble("greenSat", 1.0).toFloat(),
+                blueHue = o.optDouble("blueHue", 0.0).toFloat(),
+                blueSat = o.optDouble("blueSat", 1.0).toFloat()
             )
         }
     }
@@ -92,6 +112,26 @@ data class Look(
                     exposure = 0f, warmth = 0.35f, tint = 0.1f, contrast = 1.05f,
                     rolloff = 0.6f, fade = 0.15f, shadowWarm = 0.6f,
                     saturation = 0.95f, skin = 0.7f
+                )
+            ),
+            Look(
+                "builtin_canon_like", "캐논 느낌", true, null,
+                LookParams(
+                    exposure = 0f, warmth = 0.3f, tint = 0.15f, contrast = 1.08f,
+                    rolloff = 0.7f, fade = 0.08f, shadowWarm = 0.5f,
+                    saturation = 1.05f, skin = 0.7f, skinHue = 0.45f,
+                    redSat = 1.12f, greenHue = 0.5f, greenSat = 0.9f,
+                    blueHue = -0.2f, blueSat = 1.05f
+                )
+            ),
+            Look(
+                "builtin_iphone_like", "아이폰 느낌", true, null,
+                LookParams(
+                    exposure = 0.15f, warmth = 0.1f, tint = 0f, contrast = 0.95f,
+                    rolloff = 0.9f, fade = 0.02f, shadowWarm = 0.1f,
+                    saturation = 1.12f, skin = 0.5f, skinHue = -0.1f,
+                    redSat = 1.05f, greenHue = 0.1f, greenSat = 1.1f,
+                    blueHue = -0.15f, blueSat = 1.15f
                 )
             ),
             Look(

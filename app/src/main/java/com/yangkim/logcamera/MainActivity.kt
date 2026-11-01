@@ -96,7 +96,13 @@ class MainActivity : Activity(), CameraController.Listener {
         SliderDef("암부 따뜻하게 (− 차갑게)", -1f, 1f, { it.shadowWarm }, { p, v -> p.shadowWarm = v }),
         SliderDef("페이드 (블랙 띄우기)", 0f, 1f, { it.fade }, { p, v -> p.fade = v }),
         SliderDef("채도", 0f, 1.6f, { it.saturation }, { p, v -> p.saturation = v }),
-        SliderDef("피부톤 보호", 0f, 1f, { it.skin }, { p, v -> p.skin = v })
+        SliderDef("피부톤 보호", 0f, 1f, { it.skin }, { p, v -> p.skin = v }),
+        SliderDef("피부 혈색 (+ 붉게 / − 노랗게)", -1f, 1f, { it.skinHue }, { p, v -> p.skinHue = v }),
+        SliderDef("빨강 채도", 0f, 1.6f, { it.redSat }, { p, v -> p.redSat = v }),
+        SliderDef("초록 색상 (+ 노랗게 / − 청록)", -1f, 1f, { it.greenHue }, { p, v -> p.greenHue = v }),
+        SliderDef("초록 채도", 0f, 1.6f, { it.greenSat }, { p, v -> p.greenSat = v }),
+        SliderDef("파랑 색상 (+ 보라 / − 청록)", -1f, 1f, { it.blueHue }, { p, v -> p.blueHue = v }),
+        SliderDef("파랑 채도", 0f, 1.6f, { it.blueSat }, { p, v -> p.blueSat = v })
     )
 
     // ───────────────────────── 생명주기 ─────────────────────────
