@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF000000"
+    android:fitsSystemWindows="true">
+
+    <SurfaceView
+        android:id="@+id/preview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <View
+        android:id="@+id/flash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0"
+        android:background="#FFFFFFFF" />
+
+    <View
+        android:id="@+id/focusRing"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:background="@drawable/focus_ring"
+        android:visibility="invisible" />
+
+    <!-- 상단 바 -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/btnLook"
+            style="@style/Chip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="LUT" />
+
+        <TextView
+            android:id="@+id/btnLutToggle"
+            style="@style/Chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:text="LUT 켬" />
+
+        <TextView
+            android:id="@+id/btnFlip"
+            style="@style/Chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:text="전환" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/recTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="66dp"
+        android:background="@drawable/chip_bg"
+        android:paddingLeft="12dp"
+        android:paddingTop="4dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="4dp"
+        android:text="● 00:00"
+        android:textColor="#FFFF6B57"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <!-- 하단 바 -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingLeft="20dp"
+            android:paddingRight="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="EV"
+                android:textColor="#CCFFFFFF"
+                android:textSize="13sp" />
+
+            <SeekBar
+                android:id="@+id/evBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/evValue"
+                android:layout_width="44dp"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:text="0.0"
+                android:textColor="#CCFFFFFF"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingTop="10dp">
+
+            <TextView
+                android:id="@+id/btnMode"
+                style="@style/Chip"
+                android:layout_width="104dp"
+                android:layout_height="wrap_content"
+                android:text="영상" />
+
+            <View
+                android:id="@+id/shutter"
+                android:layout_width="78dp"
+                android:layout_height="78dp"
+                android:layout_marginLeft="28dp"
+                android:layout_marginRight="28dp"
+                android:background="@drawable/shutter_video" />
+
+            <TextView
+                android:id="@+id/btnEdit"
+                style="@style/Chip"
+                android:layout_width="104dp"
+                android:layout_height="wrap_content"
+                android:text="LUT 만들기" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- LUT 만들기 패널 -->
+    <LinearLayout
+        android:id="@+id/editorPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/panel_bg"
+        android:clickable="true"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/editorTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="6dp"
+            android:text="LUT 만들기"
+            android:textColor="#FFFFE2C4"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="260dp">
+
+            <LinearLayout
+                android:id="@+id/sliderContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="10dp">
+
+            <TextView android:id="@+id/btnEdCancel" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="취소" />
+            <TextView android:id="@+id/btnEdReset" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="초기화" />
+            <TextView android:id="@+id/btnEdExport" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="내보내기" />
+            <TextView android:id="@+id/btnEdSaveAs" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="새로 저장" />
+            <TextView android:id="@+id/btnEdSave" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="저장" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- LUT 선택 패널 -->
+    <LinearLayout
+        android:id="@+id/lookPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/panel_bg"
+        android:clickable="true"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text="LUT 선택  ·  내가 만든 LUT는 길게 눌러 삭제"
+            android:textColor="#FFFFE2C4"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="280dp">
+
+            <LinearLayout
+                android:id="@+id/lookContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="10dp">
+
+            <TextView android:id="@+id/btnImport" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="＋ .cube 가져오기" />
+            <TextView android:id="@+id/btnLookClose" style="@style/PanelButton"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="닫기" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
