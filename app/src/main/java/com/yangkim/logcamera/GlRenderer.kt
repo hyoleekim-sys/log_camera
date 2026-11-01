@@ -72,6 +72,12 @@ class GlRenderer {
     /** 0 = 카메라가 이미 로그 커브로 출력, 1 = 일반 감마 → 셰이더에서 로그로 변환 */
     @Volatile var inputMode = 0
     @Volatile var lutOn = true
+    /**
+     * 카메라가 넘겨주는 영상에 이미 센서 회전이 들어가 있는지.
+     * 갤럭시(폴드8 포함)는 미리 똑바로 세워서 줍니다. 매 프레임 실제 값으로 확인.
+     */
+    @Volatile var transformRotates = true
+        private set
 
     private val quad: FloatBuffer = floatBuffer(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f))
     private val texCoords: FloatBuffer = floatBuffer(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f))
@@ -241,6 +247,10 @@ class GlRenderer {
             makeCurrent(if (window != EGL14.EGL_NO_SURFACE) window else pbuffer)
             surfaceTexture.updateTexImage()
             surfaceTexture.getTransformMatrix(texMatrix)
+            if (sensorOrientation % 180 != 0) {
+                transformRotates = kotlin.math.abs(texMatrix[1]) > kotlin.math.abs(texMatrix[0])
+            }
+            val (outW, outH) = outputSize()
 
             if (window != EGL14.EGL_NO_SURFACE && windowW > 0 && windowH > 0) {
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
@@ -254,7 +264,7 @@ class GlRenderer {
             if (encoder != EGL14.EGL_NO_SURFACE) {
                 makeCurrent(encoder)
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-                GLES30.glViewport(0, 0, frameW, frameH)
+                GLES30.glViewport(0, 0, outW, outH)
                 draw(identity)
                 EGLExt.eglPresentationTimeANDROID(display, encoder, surfaceTexture.timestamp)
                 EGL14.eglSwapBuffers(display, encoder)
@@ -263,30 +273,40 @@ class GlRenderer {
             val cb = pendingPhoto
             if (cb != null) {
                 pendingPhoto = null
-                cb(renderToBitmap())
+                cb(renderToBitmap(outW, outH))
             }
         } catch (e: Exception) {
             Log.w(TAG, "frame error", e)
         }
     }
 
-    /** 미리보기: 센서 방향만큼 돌리고, 화면 비율에 맞추고, 전면은 거울처럼. */
+    /** 저장(녹화·사진) 크기: 세워서 들어오면 세로 1080x1920. */
+    fun outputSize(): Pair<Int, Int> =
+        if (transformRotates && sensorOrientation % 180 != 0) Pair(frameH, frameW) else Pair(frameW, frameH)
+
+    /** 미리보기: 화면 비율에 맞추고, 필요할 때만 회전. */
     private fun previewMvp(): FloatArray {
-        val deg = (sensorOrientation - displayRotation + 360) % 360
-        val rotated = deg % 180 != 0
-        val cw = if (rotated) frameH else frameW
-        val ch = if (rotated) frameW else frameH
-        val r = cw.toFloat() / ch
-        val vr = windowW.toFloat() / windowH
-        val sx: Float
-        val sy: Float
-        if (r > vr) { sx = 1f; sy = vr / r } else { sx = r / vr; sy = 1f }
         val m = FloatArray(16)
         Matrix.setIdentityM(m, 0)
-        Matrix.scaleM(m, 0, sx, sy, 1f)
-        if (isFront) Matrix.scaleM(m, 0, -1f, 1f, 1f)
-        Matrix.rotateM(m, 0, -deg.toFloat(), 0f, 0f, 1f)
+        if (transformRotates) {
+            var (cw, ch) = outputSize()
+            if (displayRotation % 180 != 0) { val t = cw; cw = ch; ch = t }
+            applyAspect(m, cw, ch)
+            Matrix.rotateM(m, 0, displayRotation.toFloat(), 0f, 0f, 1f)
+        } else {
+            val deg = (sensorOrientation - displayRotation + 360) % 360
+            val rotated = deg % 180 != 0
+            applyAspect(m, if (rotated) frameH else frameW, if (rotated) frameW else frameH)
+            if (isFront) Matrix.scaleM(m, 0, -1f, 1f, 1f)
+            Matrix.rotateM(m, 0, -deg.toFloat(), 0f, 0f, 1f)
+        }
         return m
+    }
+
+    private fun applyAspect(m: FloatArray, cw: Int, ch: Int) {
+        val r = cw.toFloat() / ch
+        val vr = windowW.toFloat() / windowH
+        if (r > vr) Matrix.scaleM(m, 0, 1f, vr / r, 1f) else Matrix.scaleM(m, 0, r / vr, 1f, 1f)
     }
 
     private fun draw(mvp: FloatArray) {
@@ -310,7 +330,7 @@ class GlRenderer {
     }
 
     /** 녹화와 같은 1080p 프레임을 비트맵으로 (위아래 뒤집힌 상태 — 호출 측에서 보정). */
-    private fun renderToBitmap(): Bitmap {
+    private fun renderToBitmap(frameW: Int, frameH: Int): Bitmap {
         makeCurrent(pbuffer)
         val tex = IntArray(1)
         GLES30.glGenTextures(1, tex, 0)

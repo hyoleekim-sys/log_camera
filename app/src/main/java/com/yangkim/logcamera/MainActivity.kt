@@ -251,7 +251,9 @@ class MainActivity : Activity(), CameraController.Listener {
     /** 사진/영상 저장 회전값 (Camera2 공식). */
     private fun outputRotation(info: CameraController.CameraInfo): Int {
         val d = if (info.isFront) -deviceOrientation else deviceOrientation
-        return (info.sensorOrientation + d + 360) % 360
+        // 카메라가 이미 세워서 준 영상이면 폰을 돌린 만큼만 보정
+        val base = if (renderer.transformRotates) 0 else info.sensorOrientation
+        return (base + d + 720) % 360
     }
 
     // ───────────────────────── 컨트롤 ─────────────────────────
@@ -427,8 +429,9 @@ class MainActivity : Activity(), CameraController.Listener {
 
     private fun startRecording(info: CameraController.CameraInfo) {
         try {
+            val (outW, outH) = renderer.outputSize()
             val surface = recorder.start(
-                info.size.width, info.size.height, outputRotation(info),
+                outW, outH, outputRotation(info),
                 has(Manifest.permission.RECORD_AUDIO)
             )
             renderer.setEncoderSurface(surface)
