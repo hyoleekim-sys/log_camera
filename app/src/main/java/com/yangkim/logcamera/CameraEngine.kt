@@ -76,6 +76,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val lenses: List<Lens>,
         /** 4K(3840x2160) 스트림이 되면 그 크기, 안 되면 null */
         val size4k: Size? = null,
+        /** 카메라가 내보낼 수 있는 영상 크기 / 사진 크기 전체 */
+        val streamSizes: List<Size> = emptyList(),
+        val jpegSizes: List<Size> = emptyList(),
+        val hasFlash: Boolean = false,
         /** 셔터·ISO를 직접 정할 수 있는지 */
         val manualSensor: Boolean = false,
         val isoMin: Int = 50,
@@ -122,6 +126,12 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
+    /** 플래시(계속 켜짐) */
+    @Volatile var torch = false
+    /** 사진 비율 4:3 여부 */
+    @Volatile var aspect43 = false
+    /** 지금 받는 영상 크기 (초점 위치 계산용) */
+    @Volatile var streamSize: Size? = null
     /** 0이면 자동 노출. 0보다 크면 셔터를 이 값(ns)으로 고정하고 ISO는 manualIso. */
     @Volatile var manualExposureNs = 0L
     @Volatile var manualIso = 400
@@ -207,6 +217,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     size4k = (map.getOutputSizes(android.graphics.SurfaceTexture::class.java) ?: previewSizes)
                         .firstOrNull { it.width == 3840 && it.height == 2160 },
                     jpegSize = pick16x9(jpegSizes, 4096),
+                    streamSizes = (map.getOutputSizes(android.graphics.SurfaceTexture::class.java) ?: previewSizes).toList(),
+                    jpegSizes = jpegSizes.toList(),
+                    hasFlash = c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true,
                     activeArray = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: Rect(0, 0, 4000, 3000),
                     maxAf = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
@@ -222,6 +235,13 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         }
         // 후면 → 전면 → 외부 순서
         return out.sortedBy { if (!it.front && !it.label.startsWith("외부")) 0 else if (it.front) 1 else 2 }
+    }
+
+    /** 사진 크기: 비율에 맞는 가장 큰 크기 (가로 4096 이하). */
+    fun jpegSizeFor(c: Cam): Size {
+        if (!aspect43) return c.jpegSize
+        return c.jpegSizes.filter { it.width <= 4096 && abs(it.width * 3 - it.height * 4) <= it.width / 50 }
+            .maxByOrNull { it.width.toLong() * it.height } ?: c.jpegSize
     }
 
     private fun pick16x9(sizes: Array<Size>, maxW: Int): Size {
@@ -285,7 +305,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             outs.add(p)
             if (!videoMode) {
                 jpegReader?.close()
-                val r = ImageReader.newInstance(c.jpegSize.width, c.jpegSize.height, ImageFormat.JPEG, 2)
+                val js = jpegSizeFor(c)
+                val r = ImageReader.newInstance(js.width, js.height, ImageFormat.JPEG, 2)
                 r.setOnImageAvailableListener({ saveJpeg(it) }, handler)
                 jpegReader = r
                 outs.add(r.surface)
@@ -346,6 +367,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.SCALER_CROP_REGION, Rect(l, tp, l + w, tp + h))
         }
         b.set(CaptureRequest.CONTROL_AE_LOCK, aeLock)
+        if (c.hasFlash) {
+            b.set(CaptureRequest.FLASH_MODE,
+                if (torch) CameraMetadata.FLASH_MODE_TORCH else CameraMetadata.FLASH_MODE_OFF)
+        }
         if (manualExposureNs > 0 && c.manualSensor) {
             // 셔터 우선: 셔터 고정, ISO는 화면 밝기에 맞춰 앱이 조절
             b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
@@ -399,8 +424,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     fun setMeteringPoint(nx: Float, ny: Float) {
         val c = cam ?: return
         val a = c.activeArray
-        val fw = c.previewSize.width.toFloat()
-        val fh = c.previewSize.height.toFloat()
+        val ss = streamSize ?: c.previewSize
+        val fw = ss.width.toFloat()
+        val fh = ss.height.toFloat()
         var cropW = a.width().toFloat()
         var cropH = cropW * fh / fw
         if (cropH > a.height()) { cropH = a.height().toFloat(); cropW = cropH * fw / fh }

@@ -72,6 +72,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var shutterRow: LinearLayout
     private lateinit var btnFps: TextView
     private lateinit var btnRes: TextView
+    private lateinit var btnAspect: TextView
+    private lateinit var btnFlash: TextView
+    private var aspect43 = false
     private var res4k = false
     private lateinit var btnWb: TextView
     private lateinit var btnAe: TextView
@@ -283,6 +286,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         camIndex = i
         val c = cam ?: return
         zoom = 1f.coerceIn(c.zoomMin, c.zoomMax)
+        if (!c.hasFlash) engine.torch = false
         if (!c.supportsFps(fps)) fps = listOf(30, 24, 60).firstOrNull { c.supportsFps(it) } ?: 30
         engine.fps = fps
         engine.zoom = zoom
@@ -297,8 +301,37 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     /** 미리보기 서피스 크기가 맞을 때만 카메라를 엽니다. */
     /** 카메라에서 받는 영상 크기: 4K 선택 시 3840x2160, 아니면 1080p. */
-    private fun streamSize(c: CameraEngine.Cam): Size =
-        if (res4k && c.size4k != null) c.size4k else c.previewSize
+    private fun streamSize(c: CameraEngine.Cam): Size = pickStream(c, aspect43, res4k) ?: c.previewSize
+
+    private fun is43(s: Size) = abs(s.width * 3 - s.height * 4) <= s.width / 50
+
+    /** 비율·해상도에 맞는 영상 크기. 없으면 null. */
+    private fun pickStream(c: CameraEngine.Cam, a43: Boolean, k4: Boolean): Size? {
+        if (!a43) return if (k4) c.size4k else c.previewSize
+        val list = c.streamSizes.filter { is43(it) }
+        return if (k4) {
+            list.filter { it.width in 3000..4096 }.maxByOrNull { it.width.toLong() * it.height }
+        } else {
+            list.firstOrNull { it.width == 1440 && it.height == 1080 }
+                ?: list.filter { it.height <= 1080 }.maxByOrNull { it.width.toLong() * it.height }
+        }
+    }
+
+    /** 세로로 세워 저장할 때 인코더가 이 크기를 녹화할 수 있는지 */
+    private fun canRecord(c: CameraEngine.Cam, s: Size): Boolean {
+        val portrait = c.sensorOrientation % 180 != 0
+        val (w, h) = if (portrait) Pair(s.height, s.width) else Pair(s.width, s.height)
+        return encoderSupports(w, h, fps)
+    }
+
+    /** 비율/해상도가 바뀌면 카메라를 다시 엶 */
+    private fun restartStream() {
+        engine.close()
+        started = false
+        layoutPreview()
+        maybeStart()
+        updateButtons()
+    }
 
     /** 녹화 비트레이트 */
     private fun bitrate(): Int = when {
@@ -323,6 +356,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         if (started || !glReady || !isResumedNow || !has(Manifest.permission.CAMERA)) return
         started = true
         val size = streamSize(c)
+        engine.streamSize = size
+        engine.aspect43 = aspect43
         renderer.configure(size.width, size.height, c.sensorOrientation)
         engine.open(c, renderer.cameraSurface, videoMode)
     }
@@ -363,8 +398,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val h = full - insetTop - insetBottom
         if (w <= 0 || h <= 0) return
         val portraitContent = c.sensorOrientation % 180 != 0
-        val cw = if (portraitContent) c.previewSize.height else c.previewSize.width
-        val ch = if (portraitContent) c.previewSize.width else c.previewSize.height
+        val ss = streamSize(c)
+        val cw = if (portraitContent) ss.height else ss.width
+        val ch = if (portraitContent) ss.width else ss.height
         val r = cw.toFloat() / ch
         val pw: Int
         val ph: Int
@@ -431,7 +467,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
         (btnCamera.parent as? LinearLayout)?.removeView(btnCamera)
         val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        val small = listOf(btnRes, btnFps, btnWb, btnMode, btnGrade, btnCamera)
+        val small = listOf(btnAspect, btnRes, btnFps, btnWb, btnMode, btnGrade, btnCamera)
         if (land) {
             settingsRow.orientation = LinearLayout.HORIZONTAL
             topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap))
@@ -530,6 +566,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         shutterRow = findViewById(R.id.shutterRow)
         btnFps = findViewById(R.id.btnFps)
         btnRes = findViewById(R.id.btnRes)
+        btnAspect = findViewById(R.id.btnAspect)
+        btnFlash = findViewById(R.id.btnFlash)
         btnWb = findViewById(R.id.btnWb)
         btnAe = findViewById(R.id.btnAe)
         btnMode = findViewById(R.id.btnMode)
@@ -566,21 +604,39 @@ class MainActivity : Activity(), CameraEngine.Callback {
             val c = cam ?: return@setOnClickListener
             if (!videoMode || recorder.isRecording) return@setOnClickListener
             if (!res4k) {
-                val s = c.size4k
-                if (s == null) { toast("이 카메라는 4K가 막혀 있어요"); return@setOnClickListener }
-                // 세로로 세워 저장하므로 2160x3840도 녹화 가능한지 확인
-                val portrait = c.sensorOrientation % 180 != 0
-                val (w, h) = if (portrait) Pair(s.height, s.width) else Pair(s.width, s.height)
-                if (!encoderSupports(w, h, fps)) {
-                    toast("이 폰의 인코더가 4K ${fps}fps 녹화를 지원하지 않아요")
+                val s = pickStream(c, aspect43, true)
+                if (s == null) { toast("이 카메라는 ${if (aspect43) "4:3 " else ""}4K가 막혀 있어요"); return@setOnClickListener }
+                if (!canRecord(c, s)) {
+                    toast("이 폰의 인코더가 ${s.width}x${s.height} ${fps}fps 녹화를 지원하지 않아요")
                     return@setOnClickListener
                 }
             }
             res4k = !res4k
-            // 받는 영상 크기가 바뀌므로 카메라를 다시 엶
-            engine.close()
-            started = false
-            maybeStart()
+            restartStream()
+        }
+
+        btnAspect.setOnClickListener {
+            val c = cam ?: return@setOnClickListener
+            if (recorder.isRecording) return@setOnClickListener
+            val next = !aspect43
+            val s = pickStream(c, next, res4k)
+            if (s == null) {
+                toast("이 카메라는 ${if (next) "4:3" else "16:9"} ${if (res4k) "4K" else "1080p"}를 지원하지 않아요")
+                return@setOnClickListener
+            }
+            if (videoMode && !canRecord(c, s)) {
+                toast("이 폰의 인코더가 ${s.width}x${s.height} 녹화를 지원하지 않아요")
+                return@setOnClickListener
+            }
+            aspect43 = next
+            restartStream()
+        }
+
+        btnFlash.setOnClickListener {
+            val c = cam ?: return@setOnClickListener
+            if (!c.hasFlash) { toast("이 카메라에는 플래시가 없어요"); return@setOnClickListener }
+            engine.torch = !engine.torch
+            engine.requestUpdate()
             updateButtons()
         }
 
@@ -690,6 +746,11 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps.text = "${fps}fps"
         btnFps.alpha = if (videoMode) 1f else 0.35f
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
+        btnAspect.text = if (aspect43) "4:3" else "16:9"
+        btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
+        btnFlash.text = if (engine.torch) "플래시 켬" else "플래시 끔"
+        btnFlash.setBackgroundResource(if (engine.torch) R.drawable.chip_selected_bg else R.drawable.chip_bg)
+        btnFlash.alpha = if (c?.hasFlash == true) 1f else 0.35f
         btnRes.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
@@ -1194,7 +1255,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private fun updateInfoSub() {
         val c = cam
-        val res = if (c == null) "—" else if (res4k && c.size4k != null) "4K" else "${minOf(c.previewSize.width, c.previewSize.height)}p"
+        val res = if (c == null) "—" else {
+            val ss = streamSize(c)
+            (if (res4k) "4K" else "${minOf(ss.width, ss.height)}p") + (if (aspect43) " 4:3" else "")
+        }
         val bat = (getSystemService(BATTERY_SERVICE) as BatteryManager)
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val free = try {
@@ -1206,7 +1270,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             String.format(Locale.US, "%s · %dfps · 남은 %d시간 %02d분 · 배터리 %d%%", res, fps, mins / 60, mins % 60, bat)
         } else {
             val shots = free / 4_000_000L
-            String.format(Locale.US, "사진 16:9 · 약 %,d장 · 배터리 %d%%", shots, bat)
+            String.format(Locale.US, "사진 %s · 약 %,d장 · 배터리 %d%%", if (aspect43) "4:3" else "16:9", shots, bat)
         }
     }
 

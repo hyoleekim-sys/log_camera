@@ -45,11 +45,18 @@
             android:layout_height="wrap_content"
             android:layout_gravity="top"
             android:background="#55000000"
-            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:paddingLeft="14dp"
             android:paddingTop="8dp"
-            android:paddingRight="14dp"
+            android:paddingRight="10dp"
             android:paddingBottom="8dp">
+
+          <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
 
             <TextView
                 android:id="@+id/infoMain"
@@ -69,6 +76,16 @@
                 android:text="—"
                 android:textColor="#BBFFFFFF"
                 android:textSize="12sp" />
+          </LinearLayout>
+
+            <TextView
+                android:id="@+id/btnFlash"
+                style="@style/Ctl"
+                android:minWidth="64dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
+                android:textSize="13sp"
+                android:text="플래시 끔" />
         </LinearLayout>
 
         <com.yangkim.logcamera.HistogramView
@@ -175,6 +192,7 @@
                 android:gravity="center"
                 android:orientation="horizontal">
 
+                <TextView android:id="@+id/btnAspect" style="@style/Ctl" android:text="16:9" />
                 <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="1080p" />
                 <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30fps" />
                 <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
