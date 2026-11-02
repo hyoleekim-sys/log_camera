@@ -192,7 +192,6 @@
                 <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="1080p" />
                 <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30fps" />
                 <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
-                <TextView android:id="@+id/btnMode" style="@style/Ctl" android:text="영상" />
                 <TextView android:id="@+id/btnGrade" style="@style/Ctl" android:text="보정" />
             </LinearLayout>
 
@@ -218,6 +217,34 @@
                     android:layout_height="76dp"
                     android:layout_margin="10dp"
                     android:background="@drawable/shutter_video" />
+
+                <!-- 사진 / 영상 전환 -->
+                <LinearLayout
+                    android:id="@+id/modeToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="6dp"
+                    android:background="@drawable/chip_bg"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="3dp">
+
+                    <ImageView
+                        android:id="@+id/modePhoto"
+                        android:layout_width="40dp"
+                        android:layout_height="34dp"
+                        android:padding="6dp"
+                        android:contentDescription="사진"
+                        android:src="@drawable/ic_photo" />
+
+                    <ImageView
+                        android:id="@+id/modeVideo"
+                        android:layout_width="40dp"
+                        android:layout_height="34dp"
+                        android:padding="6dp"
+                        android:contentDescription="영상"
+                        android:src="@drawable/ic_video" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/btnCamera"

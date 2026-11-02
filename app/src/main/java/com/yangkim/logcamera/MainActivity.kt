@@ -78,7 +78,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private var res4k = false
     private lateinit var btnWb: TextView
     private lateinit var btnAe: TextView
-    private lateinit var btnMode: TextView
+    private lateinit var modePhoto: ImageView
+    private lateinit var modeVideo: ImageView
     private lateinit var thumb: ImageView
     private lateinit var shutter: View
     private lateinit var btnCamera: TextView
@@ -471,7 +472,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
         (btnCamera.parent as? LinearLayout)?.removeView(btnCamera)
         val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        val small = listOf(btnAspect, btnRes, btnFps, btnWb, btnMode, btnGrade, btnCamera)
+        val small = listOf(btnAspect, btnRes, btnFps, btnWb, btnGrade, btnCamera)
         if (land) {
             settingsRow.orientation = LinearLayout.HORIZONTAL
             topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap))
@@ -574,7 +575,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         flashSlider = findViewById(R.id.flashSlider)
         btnWb = findViewById(R.id.btnWb)
         btnAe = findViewById(R.id.btnAe)
-        btnMode = findViewById(R.id.btnMode)
+        modePhoto = findViewById(R.id.modePhoto)
+        modeVideo = findViewById(R.id.modeVideo)
         thumb = findViewById(R.id.thumb)
         shutter = findViewById(R.id.shutter)
         btnCamera = findViewById(R.id.btnCamera)
@@ -685,13 +687,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         // AE 잠금: 누르고 있는 동안만 잠금 / 오른쪽으로 밀면 고정, 왼쪽으로 밀면 해제
         btnAe.setOnTouchListener { v, ev -> onAeTouch(v, ev) }
 
-        btnMode.setOnClickListener {
-            if (recorder.isRecording) return@setOnClickListener
-            videoMode = !videoMode
-            engine.setVideoMode(videoMode)
-            updateShutterPriority()
-            updateButtons()
-        }
+        modePhoto.setOnClickListener { setMode(video = false) }
+        modeVideo.setOnClickListener { setMode(video = true) }
 
         btnCamera.setOnClickListener {
             if (entries.size < 2) return@setOnClickListener
@@ -741,6 +738,20 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 onTapFocus(e.x, e.y)
                 return true
             }
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                val start = e1 ?: return false
+                val dx = e2.x - start.x
+                val dy = e2.y - start.y
+                // 폰을 든 방향 기준의 위/아래 = 세로일 땐 화면 세로, 가로일 땐 화면 가로
+                val along = if (uiDeg == 0) dy else dx
+                val across = if (uiDeg == 0) dx else dy
+                if (abs(along) > dp(70) && abs(along) > abs(across) * 1.5f) {
+                    flipFacing()
+                    return true
+                }
+                return false
+            }
+
             override fun onLongPress(e: MotionEvent) {
                 engine.clearMetering()
                 focusRing.visibility = View.INVISIBLE
@@ -769,6 +780,31 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
+    private fun setMode(video: Boolean) {
+        if (recorder.isRecording || video == videoMode) return
+        videoMode = video
+        engine.setVideoMode(videoMode)
+        updateShutterPriority()
+        updateButtons()
+    }
+
+    /** 후면 ↔ 전면 (화면 쓸기) */
+    private fun flipFacing() {
+        val c = cam ?: return
+        if (recorder.isRecording) {
+            toast("녹화 중에는 앞뒤 카메라를 바꿀 수 없어요")
+            return
+        }
+        val target = entries.firstOrNull { cams[it.camIndex].front != c.front } ?: return
+        preview.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        flash.alpha = 1f
+        flash.animate().alpha(0f).setStartDelay(250).setDuration(300).start()
+        engine.close()
+        started = false
+        selectCamera(target.camIndex)
+        target.zoom?.let { setZoom(it) }
+    }
+
     private fun updateButtons() {
         val c = cam
         btnFps.text = "${fps}fps"
@@ -781,7 +817,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
         btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
-        btnMode.text = if (videoMode) "영상" else "사진"
+        modePhoto.setBackgroundResource(if (!videoMode) R.drawable.chip_selected_bg else 0)
+        modeVideo.setBackgroundResource(if (videoMode) R.drawable.chip_selected_bg else 0)
+        modePhoto.alpha = if (!videoMode) 1f else 0.55f
+        modeVideo.alpha = if (videoMode) 1f else 0.55f
         shutter.setBackgroundResource(
             when {
                 recorder.isRecording -> R.drawable.shutter_recording
@@ -791,7 +830,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         )
         recTime.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
         val lock = if (recorder.isRecording) 0.35f else 1f
-        btnMode.alpha = lock
+        findViewById<View>(R.id.modeToggle).alpha = lock
         btnCamera.alpha = if (c != null && entries.size < 2) 0.35f else 1f
         if (videoMode) btnFps.alpha = lock
         updateInfoSub()
