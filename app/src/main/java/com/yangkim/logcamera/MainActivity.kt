@@ -58,7 +58,14 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var focalLabel: TextView
     private lateinit var zoomLever: ZoomLever
     private lateinit var controlBar: LinearLayout
-    private lateinit var topControls: LinearLayout
+    private lateinit var btnGrade: TextView
+    private lateinit var gradeListPanel: LinearLayout
+    private lateinit var gradeList: LinearLayout
+    private lateinit var gradePanel: LinearLayout
+    private lateinit var gradeTitle: TextView
+    private lateinit var curveView: CurveView
+    private lateinit var gradeScroll: View
+    private lateinit var gradeSliders: LinearLayout
     private lateinit var focalRow: LinearLayout
     private lateinit var settingsRow: LinearLayout
     private lateinit var shutterRow: LinearLayout
@@ -72,6 +79,16 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     // ───── 상태 ─────
     private lateinit var engine: CameraEngine
+    private lateinit var renderer: GlRenderer
+    private lateinit var recorder: VideoRecorder
+    private lateinit var gradeStore: GradeStore
+    private lateinit var currentGrade: Grade
+    private var editingGrade: Grade? = null
+    private var editingIsNew = false
+    @Volatile private var currentLut: FloatArray? = null
+    private val lutExecutor = Executors.newSingleThreadExecutor()
+    private val lutGen = java.util.concurrent.atomic.AtomicInteger()
+    private var glReady = false
     private lateinit var orientationListener: OrientationEventListener
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -114,20 +131,30 @@ class MainActivity : Activity(), CameraEngine.Callback {
         setContentView(R.layout.activity_main)
         bindViews()
         engine = CameraEngine(this, this)
+        recorder = VideoRecorder(this)
+        gradeStore = GradeStore(this)
+        currentGrade = gradeStore.selected()
+        renderer = GlRenderer()
+        renderer.start {
+            runOnUiThread {
+                glReady = true
+                applyGrade(currentGrade)
+                maybeStart()
+            }
+        }
 
         preview.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {}
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                 surfaceW = width
                 surfaceH = height
+                renderer.setWindowSurface(holder.surface, width, height)
                 maybeStart()
             }
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 surfaceW = 0
                 surfaceH = 0
-                stopRecordingIfNeeded()
-                engine.close()
-                started = false
+                renderer.setWindowSurface(null, 0, 0)
             }
         })
 
@@ -177,6 +204,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     override fun onDestroy() {
         engine.release()
+        renderer.release()
+        lutExecutor.shutdown()
         worker.shutdown()
         super.onDestroy()
     }
@@ -186,6 +215,15 @@ class MainActivity : Activity(), CameraEngine.Callback {
         root.post {
             layoutPreview()
             applyUiOrientation(animate = false)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        when {
+            gradePanel.visibility == View.VISIBLE -> closeGradeEditor(revert = true)
+            gradeListPanel.visibility == View.VISIBLE -> showGradeList(false)
+            else -> super.onBackPressed()
         }
     }
 
@@ -223,7 +261,6 @@ class MainActivity : Activity(), CameraEngine.Callback {
         engine.zoom = zoom
         buildFocalButtons(c)
         started = false
-        preview.holder.setFixedSize(c.previewSize.width, c.previewSize.height)
         layoutPreview()
         updateButtons()
         updateZoomUi()
@@ -233,10 +270,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
     /** 미리보기 서피스 크기가 맞을 때만 카메라를 엽니다. */
     private fun maybeStart() {
         val c = cam ?: return
-        if (started || !isResumedNow || !has(Manifest.permission.CAMERA)) return
-        if (surfaceW != c.previewSize.width || surfaceH != c.previewSize.height) return
+        if (started || !glReady || !isResumedNow || !has(Manifest.permission.CAMERA)) return
         started = true
-        engine.open(c, preview.holder.surface, videoMode)
+        renderer.configure(c.previewSize.width, c.previewSize.height, c.sensorOrientation)
+        engine.open(c, renderer.cameraSurface, videoMode)
     }
 
     /** 미리보기를 영상 비율(세로 9:16)에 맞춰 가운데 배치. */
@@ -305,31 +342,16 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
-    /**
-     * 세로: 화각·설정·셔터 줄이 모두 아래.
-     * 가로: 화각·설정은 위쪽에 가로로, 셔터 줄은 오른쪽 세로, 레버는 셔터 바로 왼쪽.
-     */
+    /** 세로: 버튼이 아래에 가로로. 가로: 버튼이 오른쪽에 세로로, 레버는 그 바로 왼쪽. */
     private fun arrangeControls(land: Boolean) {
-        (focalRow.parent as? LinearLayout)?.removeView(focalRow)
-        (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
-        focalRow.orientation = LinearLayout.HORIZONTAL
-        settingsRow.orientation = LinearLayout.HORIZONTAL
-        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        if (land) {
-            topControls.addView(focalRow, LinearLayout.LayoutParams(wrap, wrap))
-            topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap).apply { leftMargin = dp(12) })
-            topControls.visibility = View.VISIBLE
-        } else {
-            controlBar.addView(focalRow, 0, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
-            controlBar.addView(settingsRow, 1, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
-            topControls.visibility = View.GONE
+        controlBar.orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        for (row in listOf(focalRow, settingsRow, shutterRow)) {
+            row.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         }
-        shutterRow.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        controlBar.orientation = LinearLayout.VERTICAL
         val cl = controlBar.layoutParams as FrameLayout.LayoutParams
         if (land) {
             cl.width = FrameLayout.LayoutParams.WRAP_CONTENT
-            cl.height = FrameLayout.LayoutParams.WRAP_CONTENT
+            cl.height = FrameLayout.LayoutParams.MATCH_PARENT
             cl.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         } else {
             cl.width = FrameLayout.LayoutParams.MATCH_PARENT
@@ -339,8 +361,32 @@ class MainActivity : Activity(), CameraEngine.Callback {
         controlBar.layoutParams = cl
         val ll = leverBox.layoutParams as FrameLayout.LayoutParams
         ll.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        ll.rightMargin = if (land) dp(112) else dp(6)
+        ll.rightMargin = dp(6)
         leverBox.layoutParams = ll
+        if (land) {
+            controlBar.post {
+                val l2 = leverBox.layoutParams as FrameLayout.LayoutParams
+                l2.rightMargin = controlBar.width + dp(4)
+                leverBox.layoutParams = l2
+            }
+        }
+        // 보정 창: 세로는 아래, 가로는 오른쪽 절반
+        for (panel in listOf(gradePanel, gradeListPanel)) {
+            val pl = panel.layoutParams as FrameLayout.LayoutParams
+            if (land) {
+                pl.width = (uiRoot.layoutParams.width * 0.55f).toInt()
+                pl.height = FrameLayout.LayoutParams.MATCH_PARENT
+                pl.gravity = Gravity.END
+            } else {
+                pl.width = FrameLayout.LayoutParams.MATCH_PARENT
+                pl.height = FrameLayout.LayoutParams.WRAP_CONTENT
+                pl.gravity = Gravity.BOTTOM
+            }
+            panel.layoutParams = pl
+        }
+        val sl = gradeScroll.layoutParams as LinearLayout.LayoutParams
+        if (land) { sl.height = 0; sl.weight = 1f } else { sl.height = dp(210); sl.weight = 0f }
+        gradeScroll.layoutParams = sl
     }
 
     // ───────────────────────── 컨트롤 ─────────────────────────
@@ -360,7 +406,14 @@ class MainActivity : Activity(), CameraEngine.Callback {
         focalLabel = findViewById(R.id.focalLabel)
         zoomLever = findViewById(R.id.zoomLever)
         controlBar = findViewById(R.id.controlBar)
-        topControls = findViewById(R.id.topControls)
+        btnGrade = findViewById(R.id.btnGrade)
+        gradeListPanel = findViewById(R.id.gradeListPanel)
+        gradeList = findViewById(R.id.gradeList)
+        gradePanel = findViewById(R.id.gradePanel)
+        gradeTitle = findViewById(R.id.gradeTitle)
+        curveView = findViewById(R.id.curveView)
+        gradeScroll = findViewById(R.id.gradeScroll)
+        gradeSliders = findViewById(R.id.gradeSliders)
         focalRow = findViewById(R.id.focalRow)
         settingsRow = findViewById(R.id.settingsRow)
         shutterRow = findViewById(R.id.shutterRow)
@@ -378,7 +431,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
         btnFps.setOnClickListener {
             val c = cam ?: return@setOnClickListener
-            if (!videoMode || engine.recording) return@setOnClickListener
+            if (!videoMode || recorder.isRecording) return@setOnClickListener
             val order = listOf(24, 30, 60)
             var idx = order.indexOf(fps)
             for (step in 1..3) {
@@ -402,27 +455,55 @@ class MainActivity : Activity(), CameraEngine.Callback {
             updateButtons()
         }
 
-        // AE 잠금: 길게 눌러야 바뀜 (실수로 눌리지 않게)
-        btnAe.setOnClickListener {
-            toast(if (engine.aeLock) "길게 누르면 AE 잠금 해제" else "길게 누르면 AE 잠금")
-        }
-        btnAe.setOnLongClickListener {
-            engine.aeLock = !engine.aeLock
-            engine.requestUpdate()
-            updateButtons()
-            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        // AE 잠금: 누르고 있는 동안만 잠금, 손을 떼면 풀림
+        btnAe.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    engine.aeLock = true
+                    engine.requestUpdate()
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    updateButtons()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    engine.aeLock = false
+                    engine.requestUpdate()
+                    updateButtons()
+                }
+            }
             true
         }
 
+        btnGrade.setOnClickListener { showGradeList(true) }
+        findViewById<View>(R.id.btnGrClose).setOnClickListener { showGradeList(false) }
+        findViewById<View>(R.id.btnGrNew).setOnClickListener {
+            showGradeList(false)
+            openGradeEditor(Grade.none(), isNew = true)
+        }
+        findViewById<View>(R.id.btnGrEdit).setOnClickListener {
+            showGradeList(false)
+            openGradeEditor(currentGrade, isNew = currentGrade.id == Grade.NONE_ID)
+        }
+        findViewById<View>(R.id.btnGrCancel).setOnClickListener { closeGradeEditor(revert = true) }
+        findViewById<View>(R.id.btnGrReset).setOnClickListener {
+            val e = editingGrade ?: return@setOnClickListener
+            e.setFrom(Grade.none())
+            buildGradeSliders()
+            curveView.points = e.curve
+            applyGrade(e)
+        }
+        findViewById<View>(R.id.btnGrSave).setOnClickListener { saveGrade(asNew = false) }
+        findViewById<View>(R.id.btnGrSaveAs).setOnClickListener { saveGrade(asNew = true) }
+        curveView.onChange = { editingGrade?.let { applyGrade(it) } }
+
         btnMode.setOnClickListener {
-            if (engine.recording) return@setOnClickListener
+            if (recorder.isRecording) return@setOnClickListener
             videoMode = !videoMode
             engine.setVideoMode(videoMode)
             updateButtons()
         }
 
         btnCamera.setOnClickListener {
-            if (engine.recording || cams.size < 2) return@setOnClickListener
+            if (recorder.isRecording || cams.size < 2) return@setOnClickListener
             engine.close()
             started = false
             selectCamera((camIndex + 1) % cams.size)
@@ -472,19 +553,20 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps.text = "${fps}p"
         btnFps.alpha = if (videoMode) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
-        setLocked(btnAe, engine.aeLock, "AE", "AE 잠금")
+        setLocked(btnAe, engine.aeLock, "AE-L", "AE 잠금")
+        btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
         btnMode.text = if (videoMode) "영상" else "사진"
         shutter.setBackgroundResource(
             when {
-                engine.recording -> R.drawable.shutter_recording
+                recorder.isRecording -> R.drawable.shutter_recording
                 videoMode -> R.drawable.shutter_video
                 else -> R.drawable.shutter_photo
             }
         )
-        recTime.visibility = if (engine.recording) View.VISIBLE else View.GONE
-        val lock = if (engine.recording) 0.35f else 1f
+        recTime.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
+        val lock = if (recorder.isRecording) 0.35f else 1f
         btnMode.alpha = lock
-        btnCamera.alpha = if (engine.recording || (c != null && cams.size < 2)) 0.35f else 1f
+        btnCamera.alpha = if (recorder.isRecording || (c != null && cams.size < 2)) 0.35f else 1f
         if (videoMode) btnFps.alpha = lock
         updateInfoSub()
     }
@@ -615,7 +697,13 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     // ───────────────────────── 촬영 ─────────────────────────
 
-    /** 저장 방향 (Camera2 공식). 폰을 든 방향 기준. */
+    /** 영상 저장 방향: 화면 처리 후 영상은 이미 세워져 있어 폰을 돌린 만큼만. */
+    private fun videoRotation(c: CameraEngine.Cam): Int {
+        if (!renderer.transformRotates) return outputRotation(c)
+        return if (c.front) (360 - uiDeg) % 360 else uiDeg
+    }
+
+    /** 사진 저장 방향 (Camera2 공식). 폰을 든 방향 기준. */
     private fun outputRotation(c: CameraEngine.Cam): Int {
         val d = if (c.front) -uiDeg else uiDeg
         return (c.sensorOrientation + d + 360) % 360
@@ -629,20 +717,26 @@ class MainActivity : Activity(), CameraEngine.Callback {
             engine.takePhoto(outputRotation(c))
             return
         }
-        if (engine.recording) {
+        if (recorder.isRecording) {
             stopRecordingIfNeeded()
         } else {
-            if (engine.startRecording(outputRotation(c), has(Manifest.permission.RECORD_AUDIO))) {
+            try {
+                val (w, h) = renderer.outputSize()
+                val surface = recorder.start(w, h, fps, engine.bitrate(), videoRotation(c), has(Manifest.permission.RECORD_AUDIO))
+                renderer.setEncoderSurface(surface)
                 recordStart = SystemClock.elapsedRealtime()
                 main.post(recTick)
+            } catch (e: Exception) {
+                toast("녹화를 시작할 수 없어요: ${e.message}")
             }
             updateButtons()
         }
     }
 
     private fun stopRecordingIfNeeded() {
-        if (!engine.recording) return
-        val uri = engine.stopRecording()
+        if (!recorder.isRecording) return
+        renderer.setEncoderSurface(null)
+        val uri = recorder.stop()
         updateButtons()
         if (uri != null) {
             lastUri = uri
@@ -654,17 +748,199 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
-    override fun onPhotoSaved(uri: Uri?) {
-        runOnUiThread {
-            if (uri != null) {
-                lastUri = uri
-                lastMime = "image/jpeg"
-                loadThumb(uri)
-            } else {
-                toast("사진 저장 실패")
+    override fun onJpeg(bytes: ByteArray) {
+        val lut = if (currentGrade.isNeutral) null else currentLut
+        worker.execute {
+            val uri = try { PhotoSaver.save(this, bytes, lut) } catch (e: Throwable) { null }
+            runOnUiThread {
+                if (uri != null) {
+                    lastUri = uri
+                    lastMime = "image/jpeg"
+                    loadThumb(uri)
+                } else {
+                    toast("사진 저장 실패")
+                }
             }
         }
     }
+
+    // ───────────────────────── 보정 ─────────────────────────
+
+    private class SliderDef(val label: String, val get: (Grade) -> Float, val set: (Grade, Float) -> Unit)
+
+    private val sliderDefs = listOf(
+        SliderDef("색온도  (− 차갑게 / + 따뜻하게)", { it.temp }, { g, v -> g.temp = v }),
+        SliderDef("틴트  (− 초록 / + 마젠타)", { it.tint }, { g, v -> g.tint = v }),
+        SliderDef("노출", { it.exposure }, { g, v -> g.exposure = v }),
+        SliderDef("대비", { it.contrast }, { g, v -> g.contrast = v }),
+        SliderDef("하이라이트", { it.highlights }, { g, v -> g.highlights = v }),
+        SliderDef("섀도", { it.shadows }, { g, v -> g.shadows = v }),
+        SliderDef("화이트", { it.whites }, { g, v -> g.whites = v }),
+        SliderDef("블랙", { it.blacks }, { g, v -> g.blacks = v }),
+        SliderDef("채도", { it.saturation }, { g, v -> g.saturation = v }),
+        SliderDef("얼굴 밝기", { it.skinBright }, { g, v -> g.skinBright = v }),
+        SliderDef("얼굴 톤  (− 노랗게 / + 붉게)", { it.skinHue }, { g, v -> g.skinHue = v }),
+        SliderDef("얼굴 채도", { it.skinSat }, { g, v -> g.skinSat = v })
+    )
+
+    /** 보정 → LUT 계산 → 화면에 반영 (가장 최근 것만). */
+    private fun applyGrade(g: Grade) {
+        val gen = lutGen.incrementAndGet()
+        val copy = g.copyAs()
+        lutExecutor.execute {
+            if (gen != lutGen.get()) return@execute
+            val data = GradeEngine.build(copy)
+            if (gen == lutGen.get()) {
+                currentLut = data
+                renderer.uploadLut(data, GradeEngine.N)
+            }
+        }
+    }
+
+    private fun showGradeList(show: Boolean) {
+        if (show) {
+            populateGrades()
+            gradeListPanel.visibility = View.VISIBLE
+            controlBar.visibility = View.GONE
+            leverBox.visibility = View.GONE
+        } else {
+            gradeListPanel.visibility = View.GONE
+            controlBar.visibility = View.VISIBLE
+            leverBox.visibility = View.VISIBLE
+        }
+    }
+
+    private fun populateGrades() {
+        gradeList.removeAllViews()
+        for (g in gradeStore.all()) {
+            val selected = g.id == currentGrade.id
+            val tv = TextView(this).apply {
+                text = (if (selected) "●  " else "○  ") + g.name
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 15f
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                setBackgroundResource(if (selected) R.drawable.chip_selected_bg else R.drawable.row_bg)
+                setOnClickListener {
+                    selectGrade(g)
+                    showGradeList(false)
+                }
+                setOnLongClickListener {
+                    if (g.id == Grade.NONE_ID) {
+                        toast("'보정 없음'은 지울 수 없어요")
+                    } else {
+                        android.app.AlertDialog.Builder(this@MainActivity)
+                            .setTitle("'${g.name}' 삭제할까요?")
+                            .setPositiveButton("삭제") { _, _ ->
+                                gradeStore.delete(g)
+                                if (g.id == currentGrade.id) selectGrade(Grade.none())
+                                populateGrades()
+                            }
+                            .setNegativeButton("취소", null)
+                            .show()
+                    }
+                    true
+                }
+            }
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(6)
+            gradeList.addView(tv, lp)
+        }
+    }
+
+    private fun selectGrade(g: Grade) {
+        currentGrade = g
+        gradeStore.setSelected(g.id)
+        applyGrade(g)
+        updateButtons()
+    }
+
+    private fun openGradeEditor(base: Grade, isNew: Boolean) {
+        editingIsNew = isNew
+        val e = if (isNew) base.copyAs(gradeStore.newId(), "내 보정 ${gradeStore.all().size}") else base.copyAs()
+        editingGrade = e
+        gradeTitle.text = if (isNew) "새 보정 만들기" else "보정 편집 · ${base.name}"
+        curveView.points = e.curve
+        buildGradeSliders()
+        gradePanel.visibility = View.VISIBLE
+        controlBar.visibility = View.GONE
+        leverBox.visibility = View.GONE
+        applyGrade(e)
+    }
+
+    private fun closeGradeEditor(revert: Boolean) {
+        editingGrade = null
+        gradePanel.visibility = View.GONE
+        controlBar.visibility = View.VISIBLE
+        leverBox.visibility = View.VISIBLE
+        if (revert) applyGrade(currentGrade)
+    }
+
+    private fun buildGradeSliders() {
+        val e = editingGrade ?: return
+        gradeSliders.removeAllViews()
+        for (def in sliderDefs) {
+            val label = TextView(this).apply {
+                setTextColor(0xDDFFFFFF.toInt())
+                textSize = 13f
+                setPadding(dp(4), dp(8), dp(4), 0)
+            }
+            val refresh = {
+                val v = def.get(e)
+                label.text = String.format(Locale.US, "%s   %+d", def.label, (v * 100).roundToInt())
+            }
+            refresh()
+            val bar = android.widget.SeekBar(this)
+            bar.max = 200
+            bar.progress = ((def.get(e) + 1f) * 100f).roundToInt().coerceIn(0, 200)
+            bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar, p: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    def.set(e, p / 100f - 1f)
+                    refresh()
+                    applyGrade(e)
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
+            })
+            // 이름을 누르면 0으로
+            label.setOnClickListener {
+                def.set(e, 0f)
+                bar.progress = 100
+                refresh()
+                applyGrade(e)
+            }
+            gradeSliders.addView(label)
+            gradeSliders.addView(bar)
+        }
+    }
+
+    private fun saveGrade(asNew: Boolean) {
+        val e = editingGrade ?: return
+        if (asNew || editingIsNew) {
+            val input = android.widget.EditText(this)
+            input.setText(if (editingIsNew) e.name else "${e.name} 2")
+            input.setSelection(input.text.length)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("보정 이름")
+                .setView(input)
+                .setPositiveButton("저장") { _, _ ->
+                    val name = input.text.toString().trim().ifBlank { e.name }
+                    val g = e.copyAs(gradeStore.newId(), name)
+                    gradeStore.save(g)
+                    selectGrade(g)
+                    closeGradeEditor(revert = false)
+                    toast("'$name' 저장됨")
+                }
+                .setNegativeButton("취소", null)
+                .show()
+        } else {
+            gradeStore.save(e)
+            selectGrade(e)
+            closeGradeEditor(revert = false)
+            toast("'${e.name}' 저장됨")
+        }
+    }
+
 
     private fun loadThumb(uri: Uri) {
         worker.execute {
@@ -675,7 +951,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private val recTick = object : Runnable {
         override fun run() {
-            if (!engine.recording) return
+            if (!recorder.isRecording) return
             val s = (SystemClock.elapsedRealtime() - recordStart) / 1000
             recTime.text = String.format(Locale.US, "● %02d:%02d", s / 60, s % 60)
             main.postDelayed(this, 500)

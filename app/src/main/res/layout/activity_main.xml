@@ -97,18 +97,6 @@
             android:textSize="15sp"
             android:visibility="gone" />
 
-        <!-- 가로일 때: 화각·설정 버튼이 위쪽에 가로로 -->
-        <LinearLayout
-            android:id="@+id/topControls"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top|end"
-            android:layout_marginTop="62dp"
-            android:layout_marginRight="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:visibility="gone" />
-
         <!-- 줌 레버 + 현재 화각 -->
         <LinearLayout
             android:id="@+id/leverBox"
@@ -119,6 +107,12 @@
             android:layout_marginRight="6dp"
             android:gravity="center_horizontal"
             android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/btnAe"
+                style="@style/Ctl"
+                android:layout_marginBottom="8dp"
+                android:text="AE-L" />
 
             <TextView
                 android:id="@+id/focalLabel"
@@ -170,8 +164,8 @@
 
                 <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30p" />
                 <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
-                <TextView android:id="@+id/btnAe" style="@style/Ctl" android:text="AE" />
                 <TextView android:id="@+id/btnMode" style="@style/Ctl" android:text="영상" />
+                <TextView android:id="@+id/btnGrade" style="@style/Ctl" android:text="보정" />
             </LinearLayout>
 
             <LinearLayout
@@ -205,6 +199,119 @@
                     android:layout_margin="10dp"
                     android:text="후면" />
             </LinearLayout>
+        </LinearLayout>
+
+        <!-- 보정 목록 -->
+        <LinearLayout
+            android:id="@+id/gradeListPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/panel_bg"
+            android:clickable="true"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingBottom="8dp"
+                android:text="내 보정  ·  길게 누르면 삭제"
+                android:textColor="#FFFFE2C4"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <ScrollView
+                android:id="@+id/gradeListScroll"
+                android:layout_width="match_parent"
+                android:layout_height="240dp">
+
+                <LinearLayout
+                    android:id="@+id/gradeList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="10dp">
+
+                <TextView android:id="@+id/btnGrNew" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="＋ 새로 만들기" />
+                <TextView android:id="@+id/btnGrEdit" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="지금 것 편집" />
+                <TextView android:id="@+id/btnGrClose" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="닫기" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 보정 편집 -->
+        <LinearLayout
+            android:id="@+id/gradePanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/panel_bg"
+            android:clickable="true"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/gradeTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="보정"
+                android:textColor="#FFFFE2C4"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="6dp">
+
+                <TextView android:id="@+id/btnGrCancel" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="취소" />
+                <TextView android:id="@+id/btnGrReset" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="초기화" />
+                <TextView android:id="@+id/btnGrSaveAs" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="새로 저장" />
+                <TextView android:id="@+id/btnGrSave" style="@style/Ctl"
+                    android:layout_width="0dp" android:layout_weight="1" android:text="저장" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="커브 (점을 위아래로 끌기)"
+                android:textColor="#BBFFFFFF"
+                android:textSize="12sp" />
+
+            <com.yangkim.logcamera.CurveView
+                android:id="@+id/curveView"
+                android:layout_width="match_parent"
+                android:layout_height="140dp"
+                android:layout_marginTop="4dp" />
+
+            <ScrollView
+                android:id="@+id/gradeScroll"
+                android:layout_width="match_parent"
+                android:layout_height="210dp"
+                android:layout_marginTop="6dp">
+
+                <LinearLayout
+                    android:id="@+id/gradeSliders"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
         </LinearLayout>
     </FrameLayout>
 </FrameLayout>

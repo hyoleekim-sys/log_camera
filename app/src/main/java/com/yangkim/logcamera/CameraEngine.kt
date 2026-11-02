@@ -50,7 +50,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     interface Callback {
         fun onStats(exposureNs: Long, iso: Int, kelvin: Int)
         fun onCameraError(message: String)
-        fun onPhotoSaved(uri: Uri?)
+        /** 찍힌 JPEG (보정·저장은 화면 쪽에서) */
+        fun onJpeg(bytes: ByteArray)
     }
 
     class Cam(
@@ -86,10 +87,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     private var cam: Cam? = null
     private var preview: Surface? = null
     private var jpegReader: ImageReader? = null
-    private var recSurface: Surface? = null
-    private var recorder: MediaRecorder? = null
-    private var recUri: Uri? = null
-    private var recPfd: ParcelFileDescriptor? = null
     @Volatile private var token = 0
     private var lastStats = 0L
     private var updatePending = false
@@ -100,8 +97,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
-    @Volatile var recording = false
-        private set
     @Volatile private var regions: Array<MeteringRectangle>? = null
 
     // ───────────────────────── 카메라 찾기 ─────────────────────────
@@ -162,7 +157,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     zoomRatioKey = zKey,
                     fpsRanges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList() ?: emptyList(),
                     previewSize = pick16x9(previewSizes, 1920),
-                    jpegSize = pick16x9(jpegSizes, 100000),
+                    jpegSize = pick16x9(jpegSizes, 4096),
                     activeArray = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: Rect(0, 0, 4000, 3000),
                     maxAf = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
@@ -176,7 +171,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     }
 
     private fun pick16x9(sizes: Array<Size>, maxW: Int): Size {
-        sizes.firstOrNull { it.width == 1920 && it.height == 1080 && maxW >= 1920 && maxW < 100000 }?.let { return it }
+        if (maxW == 1920) sizes.firstOrNull { it.width == 1920 && it.height == 1080 }?.let { return it }
         val wide = sizes.filter { it.width <= maxW && abs(it.width * 9 - it.height * 16) <= it.width / 50 }
         wide.maxByOrNull { it.width.toLong() * it.height }?.let { return it }
         return sizes.filter { it.width <= maxW }.maxByOrNull { it.width.toLong() * it.height } ?: sizes[0]
@@ -218,7 +213,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
 
     /** 사진 ↔ 영상 전환: 세션만 다시 만듦. */
     fun setVideoMode(video: Boolean) {
-        if (recording || video == videoMode) return
+        if (video == videoMode) return
         videoMode = video
         handler.post {
             try { session?.close() } catch (e: Exception) {}
@@ -234,11 +229,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         try {
             val outs = ArrayList<Surface>()
             outs.add(p)
-            if (videoMode) {
-                val s = recSurface ?: MediaCodec.createPersistentInputSurface().also { recSurface = it }
-                primeRecorderSurface(s, c)
-                outs.add(s)
-            } else {
+            if (!videoMode) {
                 jpegReader?.close()
                 val r = ImageReader.newInstance(c.jpegSize.width, c.jpegSize.height, ImageFormat.JPEG, 2)
                 r.setOnImageAvailableListener({ saveJpeg(it) }, handler)
@@ -262,24 +253,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             d.createCaptureSession(cfg)
         } catch (e: Exception) {
             cb.onCameraError("카메라 세션 오류: ${e.message}")
-        }
-    }
-
-    /** 녹화용 서피스를 미리 준비 (크기 지정). */
-    private fun primeRecorderSurface(s: Surface, c: Cam) {
-        val r = MediaRecorder(ctx)
-        try {
-            r.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            r.setOutputFile(File(ctx.cacheDir, "prime.mp4").absolutePath)
-            r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            r.setVideoSize(c.previewSize.width, c.previewSize.height)
-            r.setVideoFrameRate(30)
-            r.setInputSurface(s)
-            r.prepare()
-        } catch (e: Exception) {
-        } finally {
-            r.release()
         }
     }
 
@@ -334,7 +307,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         try {
             val b = d.createCaptureRequest(if (videoMode) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW)
             b.addTarget(p)
-            if (recording) recSurface?.let { b.addTarget(it) }
             applyCommon(b, c)
             s.setRepeatingRequest(b.build(), statsCallback, handler)
         } catch (e: Exception) {
@@ -421,100 +393,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         } finally {
             image.close()
         }
-        val resolver = ctx.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "IMG_${stamp()}.jpg")
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, FOLDER)
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
-        if (uri == null) { cb.onPhotoSaved(null); return }
-        try {
-            resolver.openOutputStream(uri)?.use { it.write(bytes) }
-            resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-            cb.onPhotoSaved(uri)
-        } catch (e: Exception) {
-            resolver.delete(uri, null, null)
-            cb.onPhotoSaved(null)
-        }
-    }
-
-    // ───────────────────────── 녹화 ─────────────────────────
-
-    fun startRecording(orientation: Int, withAudio: Boolean): Boolean {
-        val c = cam ?: return false
-        val s = recSurface ?: return false
-        if (!videoMode || session == null || recording) return false
-        val resolver = ctx.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, "VID_${stamp()}.mp4")
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, FOLDER)
-            put(MediaStore.Video.Media.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
-            ?: return false
-        val pfd = try { resolver.openFileDescriptor(uri, "rw") } catch (e: Exception) { null }
-        if (pfd == null) { resolver.delete(uri, null, null); return false }
-        val r = MediaRecorder(ctx)
-        try {
-            if (withAudio) r.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
-            r.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            r.setOutputFile(pfd.fileDescriptor)
-            r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            r.setVideoSize(c.previewSize.width, c.previewSize.height)
-            r.setVideoFrameRate(fps)
-            r.setVideoEncodingBitRate(bitrate())
-            if (withAudio) {
-                r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                r.setAudioSamplingRate(48000)
-                r.setAudioEncodingBitRate(192_000)
-                r.setAudioChannels(2)
-            }
-            r.setInputSurface(s)
-            r.setOrientationHint(orientation)
-            r.prepare()
-            r.start()
-        } catch (e: Exception) {
-            r.release()
-            try { pfd.close() } catch (x: Exception) {}
-            resolver.delete(uri, null, null)
-            cb.onCameraError("녹화를 시작할 수 없어요: ${e.message}")
-            return false
-        }
-        recorder = r
-        recUri = uri
-        recPfd = pfd
-        recording = true
-        requestUpdate()
-        return true
-    }
-
-    fun stopRecording(): Uri? {
-        if (!recording) return null
-        recording = false
-        runSync { submit() }
-        val r = recorder
-        recorder = null
-        var ok = true
-        if (r != null) {
-            try { r.stop() } catch (e: RuntimeException) { ok = false }
-            r.release()
-        }
-        try { recPfd?.close() } catch (e: Exception) {}
-        recPfd = null
-        val u = recUri ?: return null
-        recUri = null
-        val resolver = ctx.contentResolver
-        return if (ok) {
-            resolver.update(u, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
-            u
-        } else {
-            try { resolver.delete(u, null, null) } catch (e: Exception) {}
-            null
-        }
+        cb.onJpeg(bytes)
     }
 
     fun bitrate(): Int = if (fps >= 60) 30_000_000 else 20_000_000
@@ -529,7 +408,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     }
 
     fun close() {
-        if (recording) stopRecording()
         token++
         runSync {
             try { session?.close() } catch (e: Exception) {}
@@ -543,13 +421,11 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
 
     fun release() {
         close()
-        recSurface?.release()
-        recSurface = null
         thread.quitSafely()
     }
 
     companion object {
         const val FOLDER = "DCIM/ProCamera"
-        private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
     }
 }

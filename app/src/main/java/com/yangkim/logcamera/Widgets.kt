@@ -153,3 +153,71 @@ class LevelView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         canvas.restore()
     }
 }
+
+/** 커브 편집: 점 5개를 위아래로 끌어서 조정. */
+class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    var points: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+        set(v) { field = v; invalidate() }
+    var onChange: (() -> Unit)? = null
+
+    private val d = resources.displayMetrics.density
+    private val pad = 14f * d
+    private var active = -1
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88000000.toInt() }
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33FFFFFF; strokeWidth = 1f * d }
+    private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x44FFFFFF; strokeWidth = 1f * d }
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFF5F0EA.toInt(); strokeWidth = 2.2f * d; style = Paint.Style.STROKE
+    }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC58A.toInt() }
+    private val path = android.graphics.Path()
+
+    private fun px(x: Float) = pad + x * (width - 2 * pad)
+    private fun py(y: Float) = height - pad - y * (height - 2 * pad)
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 10f * d, 10f * d, bg)
+        for (i in 1..3) {
+            val t = i / 4f
+            canvas.drawLine(px(t), py(0f), px(t), py(1f), grid)
+            canvas.drawLine(px(0f), py(t), px(1f), py(t), grid)
+        }
+        canvas.drawLine(px(0f), py(0f), px(1f), py(1f), diag)
+        path.reset()
+        for (i in 0..64) {
+            val x = i / 64f
+            val y = GradeEngine.curveAt(points, x).coerceIn(0f, 1f)
+            if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+        }
+        canvas.drawPath(path, line)
+        for (i in 0..4) {
+            canvas.drawCircle(px(i / 4f), py(points[i]), if (i == active) 9f * d else 7f * d, dot)
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                val x = ((e.x - pad) / (width - 2 * pad)).coerceIn(0f, 1f)
+                active = (x * 4f + 0.5f).toInt().coerceIn(0, 4)
+                move(e.y)
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> { move(e.y); return true }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                active = -1
+                invalidate()
+                return true
+            }
+        }
+        return super.onTouchEvent(e)
+    }
+
+    private fun move(y: Float) {
+        if (active < 0) return
+        points[active] = ((height - pad - y) / (height - 2 * pad)).coerceIn(0f, 1f)
+        invalidate()
+        onChange?.invoke()
+    }
+}
