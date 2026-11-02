@@ -84,7 +84,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top|end"
-            android:layout_marginTop="72dp"
+            android:layout_marginTop="100dp"
             android:layout_marginRight="12dp"
             android:background="@drawable/chip_bg"
             android:fontFamily="monospace"
@@ -95,6 +95,18 @@
             android:text="● 00:00"
             android:textColor="#FFFF6B57"
             android:textSize="15sp"
+            android:visibility="gone" />
+
+        <!-- 가로일 때: 작은 설정 버튼이 오른쪽 위에 가로로 -->
+        <LinearLayout
+            android:id="@+id/topControls"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="58dp"
+            android:layout_marginRight="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:visibility="gone" />
 
         <!-- 줌 레버 + 현재 화각 -->

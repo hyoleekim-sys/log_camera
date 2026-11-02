@@ -71,10 +71,28 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val maxAf: Int,
         val maxAe: Int,
         val afModes: IntArray,
-        val stabModes: IntArray
+        val stabModes: IntArray,
+        /** 이 카메라 안의 실제 렌즈들 (후면 광각/초광각 등). 줌 배율로 전환. */
+        val lenses: List<Lens>
     ) {
         fun fpsRange(fps: Int): Range<Int>? = fpsRanges.filter { it.upper == fps }.maxByOrNull { it.lower }
         fun supportsFps(fps: Int) = fpsRange(fps) != null
+    }
+
+    class Lens(val name: String, val zoom: Float, val mm: Int)
+
+    private fun lensName(mm: Float): String = when {
+        mm < 18f -> "초광각"
+        mm <= 35f -> "광각"
+        else -> "망원"
+    }
+
+    private fun equivalent(c: CameraCharacteristics): Float? {
+        val focals = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        val phys = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        if (focals == null || focals.isEmpty() || phys == null) return null
+        val diag = sqrt(phys.width * phys.width + phys.height * phys.height)
+        return if (diag > 0f) focals[0] * 43.27f / diag else null
     }
 
     private val manager = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -142,6 +160,25 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             } else {
                 zMin = 1f; zMax = c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f; zKey = false
             }
+            // 실제 렌즈 찾기 (논리 카메라 안의 물리 카메라들)
+            val lensList = ArrayList<Lens>()
+            if (facing == CameraCharacteristics.LENS_FACING_BACK) {
+                for (pid in c.physicalCameraIds) {
+                    val pe = try { equivalent(manager.getCameraCharacteristics(pid)) } catch (e: Exception) { null } ?: continue
+                    var z = pe / eq
+                    if (z < zMin) z = zMin
+                    if (z > zMax * 1.01f) continue
+                    if (lensList.any { abs(it.zoom - z) / z < 0.08f }) continue
+                    lensList.add(Lens(lensName(pe), z, pe.roundToInt()))
+                }
+            }
+            // 줌 범위가 1배 아래로 내려가면 초광각이 있다는 뜻
+            if (facing == CameraCharacteristics.LENS_FACING_BACK && lensList.isEmpty() && zMin < 0.9f) {
+                lensList.add(Lens("초광각", zMin, (eq * zMin).roundToInt()))
+                lensList.add(Lens("광각", 1f, eq.roundToInt()))
+            }
+            lensList.sortBy { it.zoom }
+            if (lensList.isEmpty()) lensList.add(Lens(label, 1f.coerceIn(zMin, max(zMax, zMin)), eq.roundToInt()))
             val previewSizes = map.getOutputSizes(SurfaceHolder::class.java) ?: continue
             if (previewSizes.isEmpty()) continue
             val jpegSizes = map.getOutputSizes(ImageFormat.JPEG) ?: previewSizes
@@ -162,7 +199,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     maxAf = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
                     afModes = c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0),
-                    stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0)
+                    stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0),
+                    lenses = lensList
                 )
             )
         }

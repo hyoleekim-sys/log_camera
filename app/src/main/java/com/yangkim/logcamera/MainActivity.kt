@@ -58,6 +58,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var focalLabel: TextView
     private lateinit var zoomLever: ZoomLever
     private lateinit var controlBar: LinearLayout
+    private lateinit var topControls: LinearLayout
     private lateinit var btnGrade: TextView
     private lateinit var gradeListPanel: LinearLayout
     private lateinit var gradeList: LinearLayout
@@ -94,6 +95,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private val worker = Executors.newSingleThreadExecutor()
 
     private var cams: List<CameraEngine.Cam> = emptyList()
+
+    /** 카메라 버튼으로 고르는 항목: 후면 렌즈마다 하나씩 + 전면. */
+    private class CamEntry(val camIndex: Int, val zoom: Float?, val label: String)
+    private var entries: List<CamEntry> = emptyList()
     private var camIndex = 0
     private val cam: CameraEngine.Cam? get() = cams.getOrNull(camIndex)
 
@@ -248,13 +253,32 @@ class MainActivity : Activity(), CameraEngine.Callback {
             toast("사용할 수 있는 카메라가 없어요")
             return
         }
+        entries = cams.flatMapIndexed { i, c ->
+            if (!c.front && c.lenses.size > 1) {
+                // 광각을 먼저, 그다음 초광각·망원
+                val sorted = c.lenses.sortedBy { if (abs(it.zoom - 1f) < 0.05f) 0 else 1 }
+                sorted.map { CamEntry(i, it.zoom, it.name) }
+            } else {
+                listOf(CamEntry(i, null, if (c.front) c.label else c.lenses.firstOrNull()?.name ?: c.label))
+            }
+        }
         selectCamera(0)
+    }
+
+    /** 지금 보고 있는 렌즈 이름 (줌 배율 기준). */
+    private fun currentEntryIndex(): Int {
+        val list = entries.withIndex().filter { it.value.camIndex == camIndex }
+        if (list.isEmpty()) return 0
+        val withZoom = list.filter { it.value.zoom != null }
+        if (withZoom.isEmpty()) return list.first().index
+        // 지금 줌 이하에서 가장 큰 렌즈 (폰도 그 렌즈를 씀)
+        val active = withZoom.filter { it.value.zoom!! <= zoom * 1.001f }.maxByOrNull { it.value.zoom!! }
+        return (active ?: withZoom.minByOrNull { it.value.zoom!! }!!).index
     }
 
     private fun selectCamera(i: Int) {
         camIndex = i
         val c = cam ?: return
-        btnCamera.text = c.label
         zoom = 1f.coerceIn(c.zoomMin, c.zoomMax)
         if (!c.supportsFps(fps)) fps = listOf(30, 24, 60).firstOrNull { c.supportsFps(it) } ?: 30
         engine.fps = fps
@@ -344,9 +368,36 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     /** 세로: 버튼이 아래에 가로로. 가로: 버튼이 오른쪽에 세로로, 레버는 그 바로 왼쪽. */
     private fun arrangeControls(land: Boolean) {
+        // 설정 버튼 + 카메라 버튼: 가로에선 작게 오른쪽 위로
+        (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
+        (btnCamera.parent as? LinearLayout)?.removeView(btnCamera)
+        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
+        val small = listOf(btnFps, btnWb, btnMode, btnGrade, btnCamera)
+        if (land) {
+            settingsRow.orientation = LinearLayout.HORIZONTAL
+            topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap))
+            topControls.addView(btnCamera, LinearLayout.LayoutParams(wrap, wrap).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+            for (v in small) {
+                v.textSize = 11f
+                v.minWidth = dp(40)
+                v.minimumWidth = dp(40)
+                v.setPadding(dp(8), dp(4), dp(8), dp(4))
+            }
+            topControls.visibility = View.VISIBLE
+        } else {
+            controlBar.addView(settingsRow, 1, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
+            shutterRow.addView(btnCamera, LinearLayout.LayoutParams(dp(64), dp(52)).apply { setMargins(dp(10), dp(10), dp(10), dp(10)) })
+            for (v in small) {
+                v.textSize = 14f
+                v.minWidth = dp(58)
+                v.minimumWidth = dp(58)
+                v.setPadding(dp(10), dp(8), dp(10), dp(8))
+            }
+            topControls.visibility = View.GONE
+        }
         controlBar.orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         for (row in listOf(focalRow, settingsRow, shutterRow)) {
-            row.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            row.orientation = if (land && row !== settingsRow) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         }
         val cl = controlBar.layoutParams as FrameLayout.LayoutParams
         if (land) {
@@ -406,6 +457,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         focalLabel = findViewById(R.id.focalLabel)
         zoomLever = findViewById(R.id.zoomLever)
         controlBar = findViewById(R.id.controlBar)
+        topControls = findViewById(R.id.topControls)
         btnGrade = findViewById(R.id.btnGrade)
         gradeListPanel = findViewById(R.id.gradeListPanel)
         gradeList = findViewById(R.id.gradeList)
@@ -503,10 +555,20 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
 
         btnCamera.setOnClickListener {
-            if (recorder.isRecording || cams.size < 2) return@setOnClickListener
-            engine.close()
-            started = false
-            selectCamera((camIndex + 1) % cams.size)
+            if (entries.size < 2) return@setOnClickListener
+            val next = entries[(currentEntryIndex() + 1) % entries.size]
+            if (next.camIndex == camIndex) {
+                next.zoom?.let { animateZoomTo(it) }
+            } else {
+                if (recorder.isRecording) {
+                    toast("녹화 중에는 앞뒤 카메라를 바꿀 수 없어요")
+                    return@setOnClickListener
+                }
+                engine.close()
+                started = false
+                selectCamera(next.camIndex)
+                next.zoom?.let { setZoom(it) }
+            }
         }
 
         thumb.setOnClickListener {
@@ -566,7 +628,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         recTime.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
         val lock = if (recorder.isRecording) 0.35f else 1f
         btnMode.alpha = lock
-        btnCamera.alpha = if (recorder.isRecording || (c != null && cams.size < 2)) 0.35f else 1f
+        btnCamera.alpha = if (c != null && entries.size < 2) 0.35f else 1f
         if (videoMode) btnFps.alpha = lock
         updateInfoSub()
     }
@@ -661,6 +723,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val c = cam ?: return
         val mm = (c.eq1 * zoom).roundToInt()
         focalLabel.text = String.format(Locale.US, "%dmm  %.1fx", mm, zoom)
+        entries.getOrNull(currentEntryIndex())?.let { btnCamera.text = it.label }
         for ((i, tv) in focalViews.withIndex()) {
             val opt = focalOptions.getOrNull(i) ?: continue
             val on = opt.enabled && abs(opt.zoom - zoom) / opt.zoom < 0.03f
