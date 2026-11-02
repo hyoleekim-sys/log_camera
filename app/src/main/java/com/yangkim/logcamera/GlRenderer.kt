@@ -51,6 +51,16 @@ class GlRenderer {
     private var uCam = 0
     private var uLut = 0
     private var uLutSize = 0
+    private var uLutOn = 0
+    private var rawDraw = false
+    private var frameCount = 0
+    private var probeFbo = 0
+    private var probeTex = 0
+    private val probeBuf: ByteBuffer = ByteBuffer.allocateDirect(PROBE_W * PROBE_H * 4).order(ByteOrder.nativeOrder())
+
+    /** 보정 전 카메라 화면의 평균 밝기 (0..1). 셔터 우선 자동 ISO에 사용. */
+    @Volatile var meanLuma = -1f
+        private set
 
     private lateinit var surfaceTexture: SurfaceTexture
     lateinit var cameraSurface: Surface
@@ -190,6 +200,7 @@ class GlRenderer {
         uCam = GLES30.glGetUniformLocation(program, "uCam")
         uLut = GLES30.glGetUniformLocation(program, "uLut")
         uLutSize = GLES30.glGetUniformLocation(program, "uLutSize")
+        uLutOn = GLES30.glGetUniformLocation(program, "uLutOn")
 
         val t = IntArray(2)
         GLES30.glGenTextures(2, t, 0)
@@ -243,6 +254,9 @@ class GlRenderer {
                 EGL14.eglSwapBuffers(display, window)
             }
 
+            frameCount++
+            if (frameCount % 6 == 0) measure()
+
             if (encoder != EGL14.EGL_NO_SURFACE) {
                 val (outW, outH) = outputSize()
                 makeCurrent(encoder)
@@ -257,6 +271,50 @@ class GlRenderer {
     }
 
     private fun legacyEncoderMvp(): FloatArray = identity
+
+    /** 보정 없이 작게 그려서 평균 밝기 계산 (가운데를 두 배 가중). */
+    private fun measure() {
+        if (probeFbo == 0) {
+            val t = IntArray(1)
+            GLES30.glGenTextures(1, t, 0)
+            probeTex = t[0]
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, probeTex)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, PROBE_W, PROBE_H, 0,
+                GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+            val f = IntArray(1)
+            GLES30.glGenFramebuffers(1, f, 0)
+            probeFbo = f[0]
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, probeFbo)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D, probeTex, 0)
+        }
+        makeCurrent(pbuffer)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, probeFbo)
+        GLES30.glViewport(0, 0, PROBE_W, PROBE_H)
+        rawDraw = true
+        draw(identity)
+        rawDraw = false
+        probeBuf.clear()
+        GLES30.glReadPixels(0, 0, PROBE_W, PROBE_H, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, probeBuf)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        var sum = 0.0
+        var wsum = 0.0
+        for (y in 0 until PROBE_H) for (x in 0 until PROBE_W) {
+            val i = (y * PROBE_W + x) * 4
+            val r = probeBuf.get(i).toInt() and 0xFF
+            val g = probeBuf.get(i + 1).toInt() and 0xFF
+            val b = probeBuf.get(i + 2).toInt() and 0xFF
+            val l = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255.0
+            val cx = abs(x - PROBE_W / 2f) / (PROBE_W / 2f)
+            val cy = abs(y - PROBE_H / 2f) / (PROBE_H / 2f)
+            val w = if (cx < 0.5f && cy < 0.5f) 2.0 else 1.0
+            sum += l * w
+            wsum += w
+        }
+        meanLuma = (sum / wsum).toFloat()
+    }
 
     /** 미리보기: 화면 비율에 맞추기 (회전이 안 들어온 기기만 직접 돌림). */
     private fun previewMvp(): FloatArray {
@@ -289,6 +347,7 @@ class GlRenderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
         GLES30.glUniform1i(uLut, 1)
         GLES30.glUniform1f(uLutSize, lutSize.toFloat())
+        GLES30.glUniform1i(uLutOn, if (rawDraw) 0 else 1)
         GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
         GLES30.glUniformMatrix4fv(uMvp, 1, false, mvp, 0)
         GLES30.glEnableVertexAttribArray(aPos)
@@ -324,6 +383,8 @@ class GlRenderer {
     companion object {
         private const val TAG = "ProCamera"
         private const val EGL_RECORDABLE_ANDROID = 0x3142
+        private const val PROBE_W = 48
+        private const val PROBE_H = 27
 
         private fun floatBuffer(a: FloatArray): FloatBuffer =
             ByteBuffer.allocateDirect(a.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -348,10 +409,12 @@ precision highp float;
 uniform samplerExternalOES uCam;
 uniform highp sampler3D uLut;
 uniform float uLutSize;
+uniform int uLutOn;
 in vec2 vTex;
 out vec4 outColor;
 void main() {
     vec3 c = clamp(texture(uCam, vTex).rgb, 0.0, 1.0);
+    if (uLutOn == 0) { outColor = vec4(c, 1.0); return; }
     vec3 p = c * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize;
     outColor = vec4(texture(uLut, p).rgb, 1.0);
 }

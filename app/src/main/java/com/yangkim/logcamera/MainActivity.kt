@@ -192,6 +192,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         if (orientationListener.canDetectOrientation()) orientationListener.enable()
         initCameras()
         maybeStart()
+        if (cam != null) updateShutterPriority()
         main.post(histogramTick)
         main.post(statusTick)
     }
@@ -283,6 +284,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         if (!c.supportsFps(fps)) fps = listOf(30, 24, 60).firstOrNull { c.supportsFps(it) } ?: 30
         engine.fps = fps
         engine.zoom = zoom
+        updateShutterPriority()
         buildFocalButtons(c)
         started = false
         layoutPreview()
@@ -529,6 +531,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 }
             }
             engine.fps = fps
+            updateShutterPriority()
             engine.requestUpdate()
             updateButtons()
         }
@@ -574,6 +577,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             if (recorder.isRecording) return@setOnClickListener
             videoMode = !videoMode
             engine.setVideoMode(videoMode)
+            updateShutterPriority()
             updateButtons()
         }
 
@@ -635,7 +639,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private fun updateButtons() {
         val c = cam
-        btnFps.text = "${fps}p"
+        btnFps.text = "${fps}fps"
         btnFps.alpha = if (videoMode) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
@@ -1156,6 +1160,54 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
+    // ───── 셔터 우선 (영상): 셔터 = 1/(프레임×2), ISO 자동 ─────
+
+    private fun shutterNsFor(f: Int): Long = when (f) {
+        24, 25 -> 1_000_000_000L / 50
+        30 -> 1_000_000_000L / 60
+        60 -> 1_000_000_000L / 120
+        else -> 1_000_000_000L / (f * 2)
+    }
+
+    private fun updateShutterPriority() {
+        val c = cam
+        val on = videoMode && c != null && c.manualSensor
+        val ns = if (on) shutterNsFor(fps) else 0L
+        if (ns > 0 && engine.manualExposureNs == 0L) {
+            // 자동 노출이 찾아둔 밝기에서 시작
+            val start = if (lastExp > 0 && lastIso > 0) (lastExp.toDouble() * lastIso / ns).toInt() else 400
+            isoF = start.coerceIn(c!!.isoMin, c.isoMax).toFloat()
+            engine.manualIso = isoF.roundToInt()
+        }
+        engine.manualExposureNs = ns
+        engine.requestUpdate()
+        main.removeCallbacks(isoTick)
+        if (ns > 0) main.postDelayed(isoTick, 200)
+    }
+
+    private var isoF = 400f
+
+    /** 보정 전 화면 밝기를 보고 ISO를 천천히 맞춤. AE 잠금 중엔 그대로. */
+    private val isoTick = object : Runnable {
+        override fun run() {
+            val c = cam
+            if (engine.manualExposureNs <= 0L || c == null || !isResumedNow) return
+            val mean = renderer.meanLuma
+            if (!engine.aeLock && mean > 0.01f) {
+                val err = (ln(TARGET_LUMA / mean) / ln(2f)).coerceIn(-2f, 2f)
+                if (abs(err) > 0.06f) {
+                    isoF = (isoF * 2f.pow(err * 0.35f)).coerceIn(c.isoMin.toFloat(), c.isoMax.toFloat())
+                    val iso = isoF.roundToInt()
+                    if (iso != engine.manualIso) {
+                        engine.manualIso = iso
+                        engine.requestUpdate()
+                    }
+                }
+            }
+            main.postDelayed(this, 150)
+        }
+    }
+
     private val statusTick = object : Runnable {
         override fun run() {
             updateInfoSub()
@@ -1190,6 +1242,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     companion object {
         private const val REQ_PERMS = 1
+        /** 셔터 우선일 때 맞추는 평균 밝기 */
+        private const val TARGET_LUMA = 0.42f
         /** 레버를 끝까지 밀었을 때 줌 속도 (초당 약 4.5배) */
         private const val MAX_ZOOM_SPEED = 1.5f
     }

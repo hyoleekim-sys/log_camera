@@ -73,7 +73,12 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val afModes: IntArray,
         val stabModes: IntArray,
         /** 이 카메라 안의 실제 렌즈들 (후면 광각/초광각 등). 줌 배율로 전환. */
-        val lenses: List<Lens>
+        val lenses: List<Lens>,
+        /** 셔터·ISO를 직접 정할 수 있는지 */
+        val manualSensor: Boolean = false,
+        val isoMin: Int = 50,
+        val isoMax: Int = 3200,
+        val expMaxNs: Long = 100_000_000L
     ) {
         fun fpsRange(fps: Int): Range<Int>? = fpsRanges.filter { it.upper == fps }.maxByOrNull { it.lower }
         fun supportsFps(fps: Int) = fpsRange(fps) != null
@@ -115,6 +120,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
+    /** 0이면 자동 노출. 0보다 크면 셔터를 이 값(ns)으로 고정하고 ISO는 manualIso. */
+    @Volatile var manualExposureNs = 0L
+    @Volatile var manualIso = 400
     @Volatile private var regions: Array<MeteringRectangle>? = null
 
     // ───────────────────────── 카메라 찾기 ─────────────────────────
@@ -200,6 +208,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
                     afModes = c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0),
                     stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0),
+                    manualSensor = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR),
+                    isoMin = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.lower ?: 50,
+                    isoMax = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200,
+                    expMaxNs = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper ?: 100_000_000L,
                     lenses = lensList
                 )
             )
@@ -330,6 +342,13 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.SCALER_CROP_REGION, Rect(l, tp, l + w, tp + h))
         }
         b.set(CaptureRequest.CONTROL_AE_LOCK, aeLock)
+        if (manualExposureNs > 0 && c.manualSensor) {
+            // 셔터 우선: 셔터 고정, ISO는 화면 밝기에 맞춰 앱이 조절
+            b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+            b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, min(manualExposureNs, c.expMaxNs))
+            b.set(CaptureRequest.SENSOR_SENSITIVITY, manualIso.coerceIn(c.isoMin, c.isoMax))
+            b.set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / fps.coerceAtLeast(1))
+        }
         b.set(CaptureRequest.CONTROL_AWB_LOCK, awbLock)
         val r = regions
         if (r != null) {
