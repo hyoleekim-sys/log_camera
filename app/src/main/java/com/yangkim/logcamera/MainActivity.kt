@@ -301,10 +301,39 @@ class MainActivity : Activity(), CameraEngine.Callback {
     }
 
     /** 미리보기를 영상 비율(세로 9:16)에 맞춰 가운데 배치. */
+    /** 보정창이 가리는 화면 위/아래 영역 (px). 열려 있으면 미리보기를 남은 곳에 줄여서 보여줌. */
+    private var insetTop = 0
+    private var insetBottom = 0
+
+    private fun gradePanelOpen() =
+        gradePanel.visibility == View.VISIBLE || gradeListPanel.visibility == View.VISIBLE
+
+    /** 보정창 크기에 맞춰 미리보기 자리 다시 계산. */
+    private fun updatePreviewInsets() {
+        val open = gradePanelOpen()
+        insetTop = 0
+        insetBottom = 0
+        if (open) {
+            val panel = if (gradePanel.visibility == View.VISIBLE) gradePanel else gradeListPanel
+            when (uiDeg) {
+                0 -> insetBottom = panel.height
+                270 -> insetBottom = panel.width   // 판이 시계방향으로 돌아 오른쪽 → 화면 아래
+                90 -> insetTop = panel.width       // 반시계방향으로 돌아 오른쪽 → 화면 위
+            }
+        }
+        // 미리보기를 가리는 정보 표시는 보정 중엔 숨김
+        val overlay = if (open) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.infoBar).visibility = overlay
+        histogram.visibility = overlay
+        level.visibility = overlay
+        layoutPreview()
+    }
+
     private fun layoutPreview() {
         val c = cam ?: return
         val w = root.width - root.paddingLeft - root.paddingRight
-        val h = root.height - root.paddingTop - root.paddingBottom
+        val full = root.height - root.paddingTop - root.paddingBottom
+        val h = full - insetTop - insetBottom
         if (w <= 0 || h <= 0) return
         val portraitContent = c.sensorOrientation % 180 != 0
         val cw = if (portraitContent) c.previewSize.height else c.previewSize.width
@@ -314,10 +343,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val ph: Int
         if (w.toFloat() / h > r) { ph = h; pw = (h * r).roundToInt() } else { pw = w; ph = (w / r).roundToInt() }
         val lp = preview.layoutParams as FrameLayout.LayoutParams
-        if (lp.width != pw || lp.height != ph) {
+        val top = insetTop + (h - ph) / 2
+        if (lp.width != pw || lp.height != ph || lp.topMargin != top) {
             lp.width = pw
             lp.height = ph
-            lp.gravity = Gravity.CENTER
+            lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            lp.topMargin = top
             preview.layoutParams = lp
         }
     }
@@ -355,6 +386,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             uiRoot.layoutParams = lp
             uiRoot.rotation = when (uiDeg) { 90 -> -90f; 270 -> 90f; else -> 0f }
             arrangeControls(land)
+            if (gradePanelOpen()) uiRoot.post { updatePreviewInsets() }
         }
         if (animate) {
             uiRoot.animate().alpha(0f).setDuration(110).withEndAction {
@@ -436,7 +468,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             panel.layoutParams = pl
         }
         val sl = gradeScroll.layoutParams as LinearLayout.LayoutParams
-        if (land) { sl.height = 0; sl.weight = 1f } else { sl.height = dp(210); sl.weight = 0f }
+        if (land) { sl.height = 0; sl.weight = 1f } else { sl.height = dp(170); sl.weight = 0f }
         gradeScroll.layoutParams = sl
     }
 
@@ -871,6 +903,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             controlBar.visibility = View.VISIBLE
             leverBox.visibility = View.VISIBLE
         }
+        gradeListPanel.post { updatePreviewInsets() }
     }
 
     private fun populateGrades() {
@@ -927,6 +960,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         gradePanel.visibility = View.VISIBLE
         controlBar.visibility = View.GONE
         leverBox.visibility = View.GONE
+        gradePanel.post { updatePreviewInsets() }
         applyGrade(e)
     }
 
@@ -935,6 +969,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         gradePanel.visibility = View.GONE
         controlBar.visibility = View.VISIBLE
         leverBox.visibility = View.VISIBLE
+        updatePreviewInsets()
         if (revert) applyGrade(currentGrade)
     }
 
