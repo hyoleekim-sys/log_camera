@@ -159,6 +159,9 @@ class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var points: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
         set(v) { field = v; invalidate() }
     var onChange: (() -> Unit)? = null
+    /** 선·점 색 (전체=흰색, R/G/B) */
+    var lineColor: Int = 0xFFF5F0EA.toInt()
+        set(v) { field = v; line.color = v; dot.color = v; invalidate() }
 
     private val d = resources.displayMetrics.density
     private val pad = 14f * d

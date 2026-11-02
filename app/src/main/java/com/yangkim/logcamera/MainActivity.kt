@@ -540,22 +540,6 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
 
         // AE 잠금: 누르고 있는 동안만 잠금, 손을 떼면 풀림
-        btnAe.setOnTouchListener { v, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    engine.aeLock = true
-                    engine.requestUpdate()
-                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-                    updateButtons()
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    engine.aeLock = false
-                    engine.requestUpdate()
-                    updateButtons()
-                }
-            }
-            true
-        }
 
         btnGrade.setOnClickListener { showGradeList(true) }
         findViewById<View>(R.id.btnGrClose).setOnClickListener { showGradeList(false) }
@@ -572,12 +556,19 @@ class MainActivity : Activity(), CameraEngine.Callback {
             val e = editingGrade ?: return@setOnClickListener
             e.setFrom(Grade.none())
             buildGradeSliders()
-            curveView.points = e.curve
+            selectCurveTab(curveTab)
             applyGrade(e)
         }
         findViewById<View>(R.id.btnGrSave).setOnClickListener { saveGrade(asNew = false) }
         findViewById<View>(R.id.btnGrSaveAs).setOnClickListener { saveGrade(asNew = true) }
         curveView.onChange = { editingGrade?.let { applyGrade(it) } }
+        val tabs = listOf(R.id.tabMaster, R.id.tabR, R.id.tabG, R.id.tabB)
+        for ((i, id) in tabs.withIndex()) {
+            findViewById<View>(id).setOnClickListener { selectCurveTab(i) }
+        }
+
+        // AE 잠금: 누르고 있는 동안만 잠금 / 오른쪽으로 밀면 고정, 왼쪽으로 밀면 해제
+        btnAe.setOnTouchListener { v, ev -> onAeTouch(v, ev) }
 
         btnMode.setOnClickListener {
             if (recorder.isRecording) return@setOnClickListener
@@ -647,7 +638,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps.text = "${fps}p"
         btnFps.alpha = if (videoMode) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
-        setLocked(btnAe, engine.aeLock, "AE-L", "AE 잠금")
+        setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "‹ AE 고정" else "AE 잠금")
         btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
         btnMode.text = if (videoMode) "영상" else "사진"
         shutter.setBackgroundResource(
@@ -917,8 +908,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 setBackgroundResource(if (selected) R.drawable.chip_selected_bg else R.drawable.row_bg)
                 setOnClickListener {
+                    // 바로 적용만 하고 창은 그대로 (닫기로 나감)
                     selectGrade(g)
-                    showGradeList(false)
+                    populateGrades()
                 }
                 setOnLongClickListener {
                     if (g.id == Grade.NONE_ID) {
@@ -943,6 +935,70 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
+    private var curveTab = 0
+
+    private fun selectCurveTab(i: Int) {
+        val e = editingGrade ?: return
+        curveTab = i
+        curveView.points = when (i) { 1 -> e.curveR; 2 -> e.curveG; 3 -> e.curveB; else -> e.curve }
+        curveView.lineColor = when (i) {
+            1 -> 0xFFFF7B7B.toInt(); 2 -> 0xFF7BE38B.toInt(); 3 -> 0xFF7BB4FF.toInt(); else -> 0xFFF5F0EA.toInt()
+        }
+        val tabs = listOf(R.id.tabMaster, R.id.tabR, R.id.tabG, R.id.tabB)
+        for ((k, id) in tabs.withIndex()) {
+            findViewById<View>(id).setBackgroundResource(if (k == i) R.drawable.chip_selected_bg else R.drawable.chip_bg)
+        }
+    }
+
+    // ───── AE 잠금 버튼 (밀어서 고정) ─────
+    private var aeLatched = false
+    private var aeDownX = 0f
+
+    private fun setAe(locked: Boolean) {
+        if (engine.aeLock != locked) {
+            engine.aeLock = locked
+            engine.requestUpdate()
+        }
+        updateButtons()
+        updateInfoMain()
+    }
+
+    private fun onAeTouch(v: View, ev: MotionEvent): Boolean {
+        val slide = dp(36).toFloat()
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                v.parent?.requestDisallowInterceptTouchEvent(true)
+                aeDownX = ev.rawXInView(v)
+                if (!aeLatched) {
+                    setAe(true)
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = ev.rawXInView(v) - aeDownX
+                v.translationX = dx.coerceIn(-slide, slide) * 0.6f
+                if (!aeLatched && dx > slide) {
+                    aeLatched = true
+                    setAe(true)
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                } else if (aeLatched && dx < -slide) {
+                    aeLatched = false
+                    setAe(false)
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    aeDownX = ev.rawXInView(v) + slide * 2 // 같은 동작에서 다시 고정되지 않게
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                v.animate().translationX(0f).setDuration(150).start()
+                if (!aeLatched) setAe(false)
+            }
+        }
+        return true
+    }
+
+    /** 버튼이 움직여도 흔들리지 않는 터치 좌표 (버튼 이동량 보정). */
+    private fun MotionEvent.rawXInView(v: View): Float = x + v.translationX
+
     private fun selectGrade(g: Grade) {
         currentGrade = g
         gradeStore.setSelected(g.id)
@@ -955,7 +1011,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val e = if (isNew) base.copyAs(gradeStore.newId(), "내 보정 ${gradeStore.all().size}") else base.copyAs()
         editingGrade = e
         gradeTitle.text = if (isNew) "새 보정 만들기" else "보정 편집 · ${base.name}"
-        curveView.points = e.curve
+        selectCurveTab(0)
         buildGradeSliders()
         gradePanel.visibility = View.VISIBLE
         controlBar.visibility = View.GONE

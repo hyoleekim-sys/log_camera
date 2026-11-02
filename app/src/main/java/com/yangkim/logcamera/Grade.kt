@@ -30,24 +30,33 @@ class Grade(
     var skinSat: Float = 0f,     // 얼굴 채도 -1..1
     /** 커브: x = 0, .25, .5, .75, 1 에서의 출력값 */
     val curve: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** 색상 커브 (빨강/초록/파랑) */
+    val curveR: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveG: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveB: FloatArray = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
 ) {
+    private fun flat(c: FloatArray) = c.withIndex().all { (i, v) -> abs(v - i * 0.25f) < 0.001f }
+
     val isNeutral: Boolean
         get() = listOf(temp, tint, exposure, contrast, highlights, shadows, whites, blacks,
             saturation, skinBright, skinHue, skinSat).all { abs(it) < 0.001f } &&
-            curve.withIndex().all { (i, v) -> abs(v - i * 0.25f) < 0.001f }
+            flat(curve) && flat(curveR) && flat(curveG) && flat(curveB)
 
     fun copyAs(newId: String = id, newName: String = name): Grade = Grade(
         newId, newName, temp, tint, exposure, contrast, highlights, shadows, whites, blacks,
         saturation, skinBright, skinHue, skinSat, curve.copyOf(),
-        if (newId == id) createdAt else System.currentTimeMillis()
+        if (newId == id) createdAt else System.currentTimeMillis(),
+        curveR.copyOf(), curveG.copyOf(), curveB.copyOf()
     )
 
     fun setFrom(o: Grade) {
         temp = o.temp; tint = o.tint; exposure = o.exposure; contrast = o.contrast
         highlights = o.highlights; shadows = o.shadows; whites = o.whites; blacks = o.blacks
         saturation = o.saturation; skinBright = o.skinBright; skinHue = o.skinHue; skinSat = o.skinSat
-        for (i in curve.indices) curve[i] = o.curve[i]
+        for (i in curve.indices) {
+            curve[i] = o.curve[i]; curveR[i] = o.curveR[i]; curveG[i] = o.curveG[i]; curveB[i] = o.curveB[i]
+        }
     }
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -58,6 +67,9 @@ class Grade(
         put("saturation", saturation.toDouble()); put("skinBright", skinBright.toDouble())
         put("skinHue", skinHue.toDouble()); put("skinSat", skinSat.toDouble())
         put("curve", JSONArray().apply { for (v in curve) put(v.toDouble()) })
+        put("curveR", JSONArray().apply { for (v in curveR) put(v.toDouble()) })
+        put("curveG", JSONArray().apply { for (v in curveG) put(v.toDouble()) })
+        put("curveB", JSONArray().apply { for (v in curveB) put(v.toDouble()) })
     }
 
     companion object {
@@ -66,13 +78,18 @@ class Grade(
 
         fun fromJson(o: JSONObject): Grade {
             fun f(k: String) = o.optDouble(k, 0.0).toFloat()
-            val c = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
-            o.optJSONArray("curve")?.let { a -> for (i in 0 until min(5, a.length())) c[i] = a.optDouble(i, c[i].toDouble()).toFloat() }
+            fun curveOf(k: String): FloatArray {
+                val c = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+                o.optJSONArray(k)?.let { a -> for (i in 0 until min(5, a.length())) c[i] = a.optDouble(i, c[i].toDouble()).toFloat() }
+                return c
+            }
+            val c = curveOf("curve")
             return Grade(
                 o.getString("id"), o.optString("name", "내 보정"),
                 f("temp"), f("tint"), f("exposure"), f("contrast"), f("highlights"), f("shadows"),
                 f("whites"), f("blacks"), f("saturation"), f("skinBright"), f("skinHue"), f("skinSat"),
-                c, o.optLong("createdAt", 0L)
+                c, o.optLong("createdAt", 0L),
+                curveOf("curveR"), curveOf("curveG"), curveOf("curveB")
             )
         }
     }
@@ -150,6 +167,9 @@ object GradeEngine {
     fun build(g: Grade, n: Int = N): FloatArray {
         val out = FloatArray(n * n * n * 3)
         val curve = Curve(g.curve)
+        val cr = Curve(g.curveR)
+        val cg = Curve(g.curveG)
+        val cb = Curve(g.curveB)
         val gain = 2f.pow(g.exposure)
         val wr = 1f + 0.10f * g.temp + 0.03f * g.tint
         val wg = 1f - 0.07f * g.tint
@@ -159,14 +179,14 @@ object GradeEngine {
         val inv = 1f / (n - 1)
         var o = 0
         for (bi in 0 until n) for (gi in 0 until n) for (ri in 0 until n) {
-            grade(ri * inv, gi * inv, bi * inv, g, curve, gain, wr, wg, wb, hsv, rgb)
+            grade(ri * inv, gi * inv, bi * inv, g, curve, cr, cg, cb, gain, wr, wg, wb, hsv, rgb)
             out[o++] = rgb[0]; out[o++] = rgb[1]; out[o++] = rgb[2]
         }
         return out
     }
 
     private fun grade(
-        r0: Float, g0: Float, b0: Float, g: Grade, curve: Curve,
+        r0: Float, g0: Float, b0: Float, g: Grade, curve: Curve, cr: Curve, cg: Curve, cb: Curve,
         gain: Float, wr: Float, wg: Float, wb: Float, hsv: FloatArray, out: FloatArray
     ) {
         // 선형으로 → 노출·화이트밸런스 → 다시 감마
@@ -174,7 +194,7 @@ object GradeEngine {
         var gg = (g0.pow(2.2f) * gain * wg).coerceAtLeast(0f).pow(1f / 2.2f)
         var b = (b0.pow(2.2f) * gain * wb).coerceAtLeast(0f).pow(1f / 2.2f)
         // 톤
-        r = curve.eval(tone(r, g)); gg = curve.eval(tone(gg, g)); b = curve.eval(tone(b, g))
+        r = cr.eval(curve.eval(tone(r, g))); gg = cg.eval(curve.eval(tone(gg, g))); b = cb.eval(curve.eval(tone(b, g)))
         r = r.coerceIn(0f, 1f); gg = gg.coerceIn(0f, 1f); b = b.coerceIn(0f, 1f)
         // 채도 + 얼굴
         rgbToHsv(r, gg, b, hsv)

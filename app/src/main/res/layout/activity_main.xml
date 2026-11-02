@@ -124,7 +124,8 @@
                 android:id="@+id/btnAe"
                 style="@style/Ctl"
                 android:layout_marginBottom="8dp"
-                android:text="AE-L" />
+                android:minWidth="76dp"
+                android:text="AE-L ›" />
 
             <TextView
                 android:id="@+id/focalLabel"
@@ -298,13 +299,34 @@
                     android:layout_width="0dp" android:layout_weight="1" android:text="저장" />
             </LinearLayout>
 
-            <TextView
+            <LinearLayout
+                android:id="@+id/curveTabs"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="커브 (점을 위아래로 끌기)"
-                android:textColor="#BBFFFFFF"
-                android:textSize="12sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="커브 · 점을 위아래로"
+                    android:textColor="#BBFFFFFF"
+                    android:textSize="12sp" />
+
+                <TextView android:id="@+id/tabMaster" style="@style/Ctl" android:minWidth="44dp"
+                    android:paddingTop="4dp" android:paddingBottom="4dp" android:textSize="12sp" android:text="전체" />
+                <TextView android:id="@+id/tabR" style="@style/Ctl" android:minWidth="40dp"
+                    android:paddingTop="4dp" android:paddingBottom="4dp" android:textSize="12sp"
+                    android:textColor="#FFFF7B7B" android:text="R" />
+                <TextView android:id="@+id/tabG" style="@style/Ctl" android:minWidth="40dp"
+                    android:paddingTop="4dp" android:paddingBottom="4dp" android:textSize="12sp"
+                    android:textColor="#FF7BE38B" android:text="G" />
+                <TextView android:id="@+id/tabB" style="@style/Ctl" android:minWidth="40dp"
+                    android:paddingTop="4dp" android:paddingBottom="4dp" android:textSize="12sp"
+                    android:textColor="#FF7BB4FF" android:text="B" />
+            </LinearLayout>
 
             <com.yangkim.logcamera.CurveView
                 android:id="@+id/curveView"
