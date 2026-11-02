@@ -638,7 +638,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps.text = "${fps}p"
         btnFps.alpha = if (videoMode) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
-        setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "‹ AE 고정" else "AE 잠금")
+        setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
         btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
         btnMode.text = if (videoMode) "영상" else "사진"
         shutter.setBackgroundResource(
@@ -950,9 +950,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
-    // ───── AE 잠금 버튼 (밀어서 고정) ─────
+    // ───── AE 잠금 버튼: 누르는 동안 잠금 / 오른쪽으로 밀면 고정, 한 번 더 밀면 해제 ─────
     private var aeLatched = false
     private var aeDownX = 0f
+    private var aeToggled = false
 
     private fun setAe(locked: Boolean) {
         if (engine.aeLock != locked) {
@@ -969,6 +970,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             MotionEvent.ACTION_DOWN -> {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
                 aeDownX = ev.rawXInView(v)
+                aeToggled = false
                 if (!aeLatched) {
                     setAe(true)
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
@@ -977,15 +979,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
             MotionEvent.ACTION_MOVE -> {
                 val dx = ev.rawXInView(v) - aeDownX
                 v.translationX = dx.coerceIn(-slide, slide) * 0.6f
-                if (!aeLatched && dx > slide) {
-                    aeLatched = true
-                    setAe(true)
+                // 오른쪽으로 밀 때마다 고정 ↔ 해제 (한 번 밀 때 한 번만)
+                if (!aeToggled && dx > slide) {
+                    aeToggled = true
+                    aeLatched = !aeLatched
+                    setAe(true) // 해제해도 손을 뗄 때까지는 잠금 유지
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                } else if (aeLatched && dx < -slide) {
-                    aeLatched = false
-                    setAe(false)
-                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    aeDownX = ev.rawXInView(v) + slide * 2 // 같은 동작에서 다시 고정되지 않게
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
