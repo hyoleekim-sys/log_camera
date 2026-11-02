@@ -80,6 +80,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val streamSizes: List<Size> = emptyList(),
         val jpegSizes: List<Size> = emptyList(),
         val hasFlash: Boolean = false,
+        /** 촬영 중 플래시 밝기 단계 수 (1이면 켬/끔만) */
+        val torchMaxLevel: Int = 1,
+        val torchDefaultLevel: Int = 1,
         /** 셔터·ISO를 직접 정할 수 있는지 */
         val manualSensor: Boolean = false,
         val isoMin: Int = 50,
@@ -127,7 +130,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var aeLock = false
     @Volatile var awbLock = false
     /** 플래시(계속 켜짐) */
-    @Volatile var torch = false
+    /** 플래시 밝기 단계: 0 = 끔 */
+    @Volatile var torchLevel = 0
     /** 사진 비율 4:3 여부 */
     @Volatile var aspect43 = false
     /** 지금 받는 영상 크기 (초점 위치 계산용) */
@@ -220,6 +224,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     streamSizes = (map.getOutputSizes(android.graphics.SurfaceTexture::class.java) ?: previewSizes).toList(),
                     jpegSizes = jpegSizes.toList(),
                     hasFlash = c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true,
+                    torchMaxLevel = if (android.os.Build.VERSION.SDK_INT >= 35)
+                        (c.get(CameraCharacteristics.FLASH_TORCH_STRENGTH_MAX_LEVEL) ?: 1).coerceAtLeast(1) else 1,
+                    torchDefaultLevel = if (android.os.Build.VERSION.SDK_INT >= 35)
+                        (c.get(CameraCharacteristics.FLASH_TORCH_STRENGTH_DEFAULT_LEVEL) ?: 1).coerceAtLeast(1) else 1,
                     activeArray = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: Rect(0, 0, 4000, 3000),
                     maxAf = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
@@ -369,7 +377,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         b.set(CaptureRequest.CONTROL_AE_LOCK, aeLock)
         if (c.hasFlash) {
             b.set(CaptureRequest.FLASH_MODE,
-                if (torch) CameraMetadata.FLASH_MODE_TORCH else CameraMetadata.FLASH_MODE_OFF)
+                if (torchLevel > 0) CameraMetadata.FLASH_MODE_TORCH else CameraMetadata.FLASH_MODE_OFF)
+            if (torchLevel > 0 && c.torchMaxLevel > 1 && android.os.Build.VERSION.SDK_INT >= 35) {
+                b.set(CaptureRequest.FLASH_STRENGTH_LEVEL, torchLevel.coerceIn(1, c.torchMaxLevel))
+            }
         }
         if (manualExposureNs > 0 && c.manualSensor) {
             // 셔터 우선: 셔터 고정, ISO는 화면 밝기에 맞춰 앱이 조절

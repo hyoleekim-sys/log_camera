@@ -78,14 +78,10 @@
                 android:textSize="12sp" />
           </LinearLayout>
 
-            <TextView
-                android:id="@+id/btnFlash"
-                style="@style/Ctl"
-                android:minWidth="64dp"
-                android:paddingTop="5dp"
-                android:paddingBottom="5dp"
-                android:textSize="13sp"
-                android:text="플래시 끔" />
+            <com.yangkim.logcamera.FlashSlider
+                android:id="@+id/flashSlider"
+                android:layout_width="128dp"
+                android:layout_height="32dp" />
         </LinearLayout>
 
         <com.yangkim.logcamera.HistogramView

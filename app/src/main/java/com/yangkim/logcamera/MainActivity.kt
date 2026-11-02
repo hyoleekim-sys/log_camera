@@ -73,7 +73,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var btnFps: TextView
     private lateinit var btnRes: TextView
     private lateinit var btnAspect: TextView
-    private lateinit var btnFlash: TextView
+    private lateinit var flashSlider: FlashSlider
     private var aspect43 = false
     private var res4k = false
     private lateinit var btnWb: TextView
@@ -185,6 +185,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
 
         setupControls()
+        addHaptics(uiRoot)
         updateButtons()
 
         val need = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO).filter { !has(it) }
@@ -286,7 +287,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
         camIndex = i
         val c = cam ?: return
         zoom = 1f.coerceIn(c.zoomMin, c.zoomMax)
-        if (!c.hasFlash) engine.torch = false
+        if (!c.hasFlash) engine.torchLevel = 0
+        flashSlider.levels = c.torchMaxLevel
+        flashSlider.setLevelSilently(engine.torchLevel.coerceAtMost(c.torchMaxLevel))
+        flashSlider.enabledFlash = c.hasFlash
         if (!c.supportsFps(fps)) fps = listOf(30, 24, 60).firstOrNull { c.supportsFps(it) } ?: 30
         engine.fps = fps
         engine.zoom = zoom
@@ -567,7 +571,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps = findViewById(R.id.btnFps)
         btnRes = findViewById(R.id.btnRes)
         btnAspect = findViewById(R.id.btnAspect)
-        btnFlash = findViewById(R.id.btnFlash)
+        flashSlider = findViewById(R.id.flashSlider)
         btnWb = findViewById(R.id.btnWb)
         btnAe = findViewById(R.id.btnAe)
         btnMode = findViewById(R.id.btnMode)
@@ -632,12 +636,16 @@ class MainActivity : Activity(), CameraEngine.Callback {
             restartStream()
         }
 
-        btnFlash.setOnClickListener {
-            val c = cam ?: return@setOnClickListener
-            if (!c.hasFlash) { toast("이 카메라에는 플래시가 없어요"); return@setOnClickListener }
-            engine.torch = !engine.torch
+        flashSlider.onBlocked = { toast("이 카메라에는 플래시가 없어요") }
+        var dimNoticeShown = false
+        flashSlider.onChange = { lv ->
+            engine.torchLevel = lv
             engine.requestUpdate()
-            updateButtons()
+            val c = cam
+            if (lv > 0 && c != null && c.torchMaxLevel <= 1 && !dimNoticeShown) {
+                dimNoticeShown = true
+                toast("이 폰은 촬영 중 플래시 밝기 조절을 막아둬서 켬/끔만 돼요")
+            }
         }
 
         btnWb.setOnClickListener {
@@ -729,6 +737,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                preview.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                 onTapFocus(e.x, e.y)
                 return true
             }
@@ -741,6 +750,25 @@ class MainActivity : Activity(), CameraEngine.Callback {
         preview.setOnTouchListener { _, ev -> detector.onTouchEvent(ev) }
     }
 
+    /**
+     * 누를 때 진동. 줌(레버·화각 버튼)은 촬영 중 쓰는 거라 제외.
+     * 기존 클릭 동작은 그대로 두고 손가락이 닿는 순간에만 진동.
+     */
+    private fun addHaptics(v: View) {
+        if (v === zoomLever || v === focalRow || v === btnAe || v is FlashSlider || v is CurveView) return
+        if (v is android.view.ViewGroup) {
+            for (i in 0 until v.childCount) addHaptics(v.getChildAt(i))
+        }
+        if (v.hasOnClickListeners()) {
+            v.setOnTouchListener { vv, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    vv.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                }
+                false
+            }
+        }
+    }
+
     private fun updateButtons() {
         val c = cam
         btnFps.text = "${fps}fps"
@@ -748,9 +776,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
         btnAspect.text = if (aspect43) "4:3" else "16:9"
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
-        btnFlash.text = if (engine.torch) "플래시 켬" else "플래시 끔"
-        btnFlash.setBackgroundResource(if (engine.torch) R.drawable.chip_selected_bg else R.drawable.chip_bg)
-        btnFlash.alpha = if (c?.hasFlash == true) 1f else 0.35f
+
         btnRes.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
@@ -1047,6 +1073,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.bottomMargin = dp(6)
             gradeList.addView(tv, lp)
+            addHaptics(tv)
         }
     }
 

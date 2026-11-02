@@ -76,7 +76,6 @@ class ZoomLever(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 onChange?.invoke(0f)
-                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 spring = ValueAnimator.ofFloat(value, 0f).apply {
                     duration = 260
                     interpolator = OvershootInterpolator(1.6f)
@@ -222,5 +221,80 @@ class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         points[active] = ((height - pad - y) / (height - 2 * pad)).coerceIn(0f, 1f)
         invalidate()
         onChange?.invoke()
+    }
+}
+
+
+/**
+ * 플래시 밝기 슬라이더. 밀어서 조절, 왼쪽 끝 = 끔.
+ * levels 가 1이면 켬/끔 두 칸.
+ */
+class FlashSlider(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    var levels = 1
+        set(v) { field = v.coerceAtLeast(1); level = level.coerceIn(0, field); invalidate() }
+    var level = 0
+        private set
+    var enabledFlash = true
+        set(v) { field = v; alpha = if (v) 1f else 0.35f; invalidate() }
+    var onChange: ((Int) -> Unit)? = null
+    var onBlocked: (() -> Unit)? = null
+
+    private val d = resources.displayMetrics.density
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99000000.toInt() }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x55FFFFFF; style = Paint.Style.STROKE; strokeWidth = 1f * d
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC8A5A2B.toInt() }
+    private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC58A.toInt() }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt(); textSize = 12f * d; textAlign = Paint.Align.CENTER
+    }
+
+    fun setLevelSilently(v: Int) { level = v.coerceIn(0, levels); invalidate() }
+
+    override fun onDraw(canvas: Canvas) {
+        val r = height / 2f
+        val rect = RectF(1f * d, 1f * d, width - 1f * d, height - 1f * d)
+        canvas.drawRoundRect(rect, r, r, bg)
+        val frac = level.toFloat() / levels
+        if (level > 0) {
+            val fr = RectF(rect.left, rect.top, rect.left + (rect.width() - 2 * r) * frac + 2 * r, rect.bottom)
+            canvas.drawRoundRect(fr, r, r, fill)
+        }
+        canvas.drawRoundRect(rect, r, r, stroke)
+        val kx = rect.left + r + (rect.width() - 2 * r) * frac
+        canvas.drawCircle(kx, height / 2f, r - 4f * d, knob)
+        val label = when {
+            level == 0 -> "플래시 끔"
+            levels > 1 -> "플래시 $level/$levels"
+            else -> "플래시 켬"
+        }
+        val ty = height / 2f - (text.descent() + text.ascent()) / 2f
+        canvas.drawText(label, width / 2f, ty, text)
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!enabledFlash) {
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) onBlocked?.invoke()
+            return true
+        }
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                val r = height / 2f
+                val frac = ((e.x - r) / (width - 2 * r)).coerceIn(0f, 1f)
+                val nl = Math.round(frac * levels)
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                if (nl != level) {
+                    level = nl
+                    if (e.actionMasked == MotionEvent.ACTION_MOVE) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    onChange?.invoke(level)
+                    invalidate()
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
+        }
+        return super.onTouchEvent(e)
     }
 }
