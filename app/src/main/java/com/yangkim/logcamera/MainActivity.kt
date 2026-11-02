@@ -74,6 +74,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var btnRes: TextView
     private lateinit var btnAspect: TextView
     private lateinit var flashSlider: FlashSlider
+    private lateinit var btnSelfie: TextView
+    private lateinit var rearSelfie: RearSelfie
     private var aspect43 = false
     private var res4k = false
     private lateinit var btnWb: TextView
@@ -185,6 +187,26 @@ class MainActivity : Activity(), CameraEngine.Callback {
             }
         }
 
+        rearSelfie = RearSelfie(this, renderer,
+            onStateChanged = { runOnUiThread { updateButtons() } },
+            onShutter = { runOnUiThread { onShutter() } },
+            onMessage = { m -> runOnUiThread { toast(m) } })
+        btnSelfie.setOnClickListener {
+            if (!rearSelfie.active) {
+                // 후면 셀피는 후면 광각으로
+                val c = cam
+                if (c != null && c.front && !recorder.isRecording) {
+                    val target = entries.firstOrNull { !cams[it.camIndex].front }
+                    if (target != null) {
+                        engine.close()
+                        started = false
+                        selectCamera(target.camIndex)
+                        target.zoom?.let { setZoom(it) }
+                    }
+                }
+            }
+            rearSelfie.toggle()
+        }
         setupControls()
         addHaptics(uiRoot)
         updateButtons()
@@ -200,6 +222,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         initCameras()
         maybeStart()
         if (cam != null) updateShutterPriority()
+        rearSelfie.start()
         main.post(histogramTick)
         main.post(statusTick)
     }
@@ -210,6 +233,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         started = false
         isResumedNow = false
         orientationListener.disable()
+        rearSelfie.stop()
         main.removeCallbacks(histogramTick)
         main.removeCallbacks(statusTick)
         super.onPause()
@@ -217,6 +241,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     override fun onDestroy() {
         engine.release()
+        rearSelfie.release()
         renderer.release()
         lutExecutor.shutdown()
         worker.shutdown()
@@ -472,7 +497,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
         (btnCamera.parent as? LinearLayout)?.removeView(btnCamera)
         val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        val small = listOf(btnAspect, btnRes, btnFps, btnWb, btnGrade, btnCamera)
+        val small = listOf(btnAspect, btnRes, btnFps, btnWb, btnGrade, btnSelfie, btnCamera)
         if (land) {
             settingsRow.orientation = LinearLayout.HORIZONTAL
             topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap))
@@ -573,6 +598,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnRes = findViewById(R.id.btnRes)
         btnAspect = findViewById(R.id.btnAspect)
         flashSlider = findViewById(R.id.flashSlider)
+        btnSelfie = findViewById(R.id.btnSelfie)
         btnWb = findViewById(R.id.btnWb)
         btnAe = findViewById(R.id.btnAe)
         modePhoto = findViewById(R.id.modePhoto)
@@ -811,6 +837,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnFps.alpha = if (videoMode) 1f else 0.35f
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
         btnAspect.text = if (aspect43) "4:3" else "16:9"
+        btnSelfie.visibility = if (rearSelfie.available || rearSelfie.active) View.VISIBLE else View.GONE
+        btnSelfie.text = if (rearSelfie.active) "셀피 끝" else "셀피"
+        btnSelfie.setBackgroundResource(if (rearSelfie.active) R.drawable.chip_selected_bg else R.drawable.chip_bg)
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
 
         btnRes.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f

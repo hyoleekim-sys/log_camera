@@ -11,8 +11,8 @@ android {
         applicationId = "com.yangkim.logcamera"
         minSdk = 31
         targetSdk = 35
-        versionCode = 21
-        versionName = "2.1"
+        versionCode = 22
+        versionName = "2.2"
     }
 
     // 빌드마다 같은 키로 서명해야 폰에서 덮어쓰기 업데이트가 됩니다.
@@ -42,4 +42,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    // 접는 폰 바깥(커버) 화면에 미리보기 띄우기
+    implementation("androidx.window:window:1.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

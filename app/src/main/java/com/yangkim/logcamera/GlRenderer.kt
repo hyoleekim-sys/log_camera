@@ -40,6 +40,10 @@ class GlRenderer {
     private var windowW = 0
     private var windowH = 0
     private var encoder: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var mirror: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var mirrorTarget: Surface? = null
+    private var mirrorW = 0
+    private var mirrorH = 0
 
     private var program = 0
     private var oesTex = 0
@@ -118,6 +122,24 @@ class GlRenderer {
         windowW = w; windowH = h
     }
 
+    /** 커버 화면 미리보기 (후면 셀피). 거울처럼 좌우 반전. */
+    fun setMirrorSurface(surface: Surface?, w: Int, h: Int) = runSync {
+        if (released) return@runSync
+        if (surface == null || surface !== mirrorTarget) {
+            if (mirror != EGL14.EGL_NO_SURFACE) {
+                makeCurrent(pbuffer)
+                EGL14.eglDestroySurface(display, mirror)
+                mirror = EGL14.EGL_NO_SURFACE
+            }
+            mirrorTarget = null
+        }
+        if (surface != null && mirror == EGL14.EGL_NO_SURFACE) {
+            mirror = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
+            mirrorTarget = surface
+        }
+        mirrorW = w; mirrorH = h
+    }
+
     fun setEncoderSurface(surface: Surface?) = runSync {
         if (released) return@runSync
         if (encoder != EGL14.EGL_NO_SURFACE) {
@@ -155,6 +177,8 @@ class GlRenderer {
             makeCurrent(pbuffer)
             if (window != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, window)
             if (encoder != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, encoder)
+            if (mirror != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, mirror)
+            mirror = EGL14.EGL_NO_SURFACE
             window = EGL14.EGL_NO_SURFACE
             encoder = EGL14.EGL_NO_SURFACE
             try { surfaceTexture.release() } catch (e: Exception) {}
@@ -246,6 +270,16 @@ class GlRenderer {
                 transformRotates = abs(texMatrix[1]) > abs(texMatrix[0])
             }
 
+            if (mirror != EGL14.EGL_NO_SURFACE && mirrorW > 0 && mirrorH > 0) {
+                makeCurrent(mirror)
+                GLES30.glViewport(0, 0, mirrorW, mirrorH)
+                GLES30.glClearColor(0f, 0f, 0f, 1f)
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                draw(previewMvp(mirrorW, mirrorH, flipX = true))
+                EGL14.eglSwapBuffers(display, mirror)
+                makeCurrent(if (window != EGL14.EGL_NO_SURFACE) window else pbuffer)
+            }
+
             if (window != EGL14.EGL_NO_SURFACE && windowW > 0 && windowH > 0) {
                 GLES30.glViewport(0, 0, windowW, windowH)
                 GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -317,24 +351,26 @@ class GlRenderer {
     }
 
     /** 미리보기: 화면 비율에 맞추기 (회전이 안 들어온 기기만 직접 돌림). */
-    private fun previewMvp(): FloatArray {
+    private fun previewMvp(vw: Int = windowW, vh: Int = windowH, flipX: Boolean = false): FloatArray {
         val m = FloatArray(16)
         Matrix.setIdentityM(m, 0)
         if (transformRotates) {
             val (cw, ch) = outputSize()
-            applyAspect(m, cw, ch)
+            applyAspect(m, cw, ch, vw, vh)
+            if (flipX) Matrix.scaleM(m, 0, -1f, 1f, 1f)
         } else {
             val deg = sensorOrientation % 360
             val rotated = deg % 180 != 0
-            applyAspect(m, if (rotated) frameH else frameW, if (rotated) frameW else frameH)
+            applyAspect(m, if (rotated) frameH else frameW, if (rotated) frameW else frameH, vw, vh)
+            if (flipX) Matrix.scaleM(m, 0, -1f, 1f, 1f)
             Matrix.rotateM(m, 0, -deg.toFloat(), 0f, 0f, 1f)
         }
         return m
     }
 
-    private fun applyAspect(m: FloatArray, cw: Int, ch: Int) {
+    private fun applyAspect(m: FloatArray, cw: Int, ch: Int, vw: Int, vh: Int) {
         val r = cw.toFloat() / ch
-        val vr = windowW.toFloat() / windowH
+        val vr = vw.toFloat() / vh
         if (r > vr) Matrix.scaleM(m, 0, 1f, vr / r, 1f) else Matrix.scaleM(m, 0, r / vr, 1f, 1f)
     }
 
