@@ -1,0 +1,155 @@
+package com.yangkim.logcamera
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.util.AttributeSet
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.View
+import android.view.animation.OvershootInterpolator
+import kotlin.math.abs
+import kotlin.math.sqrt
+
+/**
+ * 텐션 줌 레버.
+ * 위로 밀면 +, 아래로 당기면 −. 손을 떼면 스프링처럼 가운데로 돌아감.
+ * onChange 값(-1..1)은 "줌 속도"로 쓰임: 많이 밀수록 빠름.
+ */
+class ZoomLever(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    var onChange: ((Float) -> Unit)? = null
+
+    private var value = 0f
+    private var startY = 0f
+    private var startValue = 0f
+    private var spring: ValueAnimator? = null
+    private val d = resources.displayMetrics.density
+
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
+    private val trackStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x55FFFFFF; style = Paint.Style.STROKE; strokeWidth = 1f * d
+    }
+    private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88FFFFFF.toInt(); strokeWidth = 1.5f * d }
+    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF5F0EA.toInt() }
+    private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC58A.toInt() }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xCCFFFFFF.toInt(); textSize = 18f * d; textAlign = Paint.Align.CENTER
+    }
+
+    private fun thumbR() = width * 0.32f
+    private fun travel() = height / 2f - thumbR() - 26f * d
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val tw = width * 0.42f
+        val rect = RectF(cx - tw / 2, 22f * d, cx + tw / 2, height - 22f * d)
+        canvas.drawRoundRect(rect, tw / 2, tw / 2, trackPaint)
+        canvas.drawRoundRect(rect, tw / 2, tw / 2, trackStroke)
+        canvas.drawLine(cx - tw * 0.8f, cy, cx + tw * 0.8f, cy, tickPaint)
+        canvas.drawText("+", cx, 16f * d, textPaint)
+        canvas.drawText("−", cx, height - 2f * d, textPaint)
+        val ty = cy - value * travel()
+        canvas.drawCircle(cx, ty, thumbR(), if (abs(value) > 0.02f) activePaint else thumbPaint)
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                spring?.cancel()
+                parent?.requestDisallowInterceptTouchEvent(true)
+                startY = e.y
+                startValue = value
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val t = travel()
+                if (t > 0f) {
+                    value = (startValue + (startY - e.y) / t).coerceIn(-1f, 1f)
+                    onChange?.invoke(value)
+                    invalidate()
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                onChange?.invoke(0f)
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                spring = ValueAnimator.ofFloat(value, 0f).apply {
+                    duration = 260
+                    interpolator = OvershootInterpolator(1.6f)
+                    addUpdateListener { value = it.animatedValue as Float; invalidate() }
+                    start()
+                }
+                return true
+            }
+        }
+        return super.onTouchEvent(e)
+    }
+}
+
+/** 밝기 분포 그래프. */
+class HistogramView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    private val bins = FloatArray(64)
+    private var pixels = IntArray(0)
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCCF5F0EA.toInt() }
+    private val d = resources.displayMetrics.density
+
+    fun update(bmp: Bitmap) {
+        val n = bmp.width * bmp.height
+        if (pixels.size != n) pixels = IntArray(n)
+        bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        val counts = IntArray(64)
+        for (p in pixels) {
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            val y = (r * 54 + g * 183 + b * 19) shr 8
+            counts[(y shr 2).coerceIn(0, 63)]++
+        }
+        var mx = 1
+        for (c in counts) if (c > mx) mx = c
+        for (i in 0 until 64) bins[i] = sqrt(counts[i].toFloat() / mx)
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val r = 6f * d
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bg)
+        val pad = 4f * d
+        val w = (width - pad * 2) / 64f
+        val h = height - pad * 2
+        for (i in 0 until 64) {
+            val bh = bins[i] * h
+            canvas.drawRect(pad + i * w, height - pad - bh, pad + (i + 1) * w, height - pad, fill)
+        }
+    }
+}
+
+/** 수평계: 기울기만큼 선이 돌아가고, 수평이면 초록색. */
+class LevelView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    var tilt = 0f
+        set(v) { field = v; invalidate() }
+    private val d = resources.displayMetrics.density
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f * d; strokeCap = Paint.Cap.ROUND }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val len = 70f * d
+        val gap = 14f * d
+        val level = abs(tilt) < 1f
+        line.color = if (level) 0xFF7CE38B.toInt() else 0xAAFFFFFF.toInt()
+        // 고정 기준 눈금
+        canvas.drawLine(cx - len - 14f * d, cy, cx - len - 4f * d, cy, line)
+        canvas.drawLine(cx + len + 4f * d, cy, cx + len + 14f * d, cy, line)
+        canvas.save()
+        canvas.rotate(-tilt, cx, cy)
+        canvas.drawLine(cx - len, cy, cx - gap, cy, line)
+        canvas.drawLine(cx + gap, cy, cx + len, cy, line)
+        canvas.restore()
+    }
+}

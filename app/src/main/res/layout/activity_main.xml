@@ -9,14 +9,15 @@
     <SurfaceView
         android:id="@+id/preview"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:layout_gravity="center" />
 
     <View
         android:id="@+id/flash"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:alpha="0"
-        android:background="#FFFFFFFF" />
+        android:background="#FF000000" />
 
     <View
         android:id="@+id/focusRing"
@@ -25,229 +26,173 @@
         android:background="@drawable/focus_ring"
         android:visibility="invisible" />
 
-    <!-- 상단 바 -->
-    <LinearLayout
-        android:id="@+id/topBar"
+    <!-- 폰을 돌리면 이 판 전체가 돌아갑니다 -->
+    <FrameLayout
+        android:id="@+id/uiRoot"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="12dp">
+        android:layout_height="match_parent"
+        android:layout_gravity="center">
 
-        <TextView
-            android:id="@+id/btnLook"
-            style="@style/Chip"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="LUT" />
+        <com.yangkim.logcamera.LevelView
+            android:id="@+id/level"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-        <TextView
-            android:id="@+id/btnLutToggle"
-            style="@style/Chip"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginLeft="8dp"
-            android:text="LUT 켬" />
-
-        <TextView
-            android:id="@+id/btnFlip"
-            style="@style/Chip"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginLeft="8dp"
-            android:text="전환" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/recTime"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="66dp"
-        android:background="@drawable/chip_bg"
-        android:paddingLeft="12dp"
-        android:paddingTop="4dp"
-        android:paddingRight="12dp"
-        android:paddingBottom="4dp"
-        android:text="● 00:00"
-        android:textColor="#FFFF6B57"
-        android:textSize="15sp"
-        android:visibility="gone" />
-
-    <!-- 하단 바 -->
-    <LinearLayout
-        android:id="@+id/bottomBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:orientation="vertical"
-        android:paddingBottom="12dp">
-
+        <!-- 상단 정보 -->
         <LinearLayout
+            android:id="@+id/infoBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingLeft="20dp"
-            android:paddingRight="20dp">
+            android:layout_gravity="top"
+            android:background="#55000000"
+            android:orientation="vertical"
+            android:paddingLeft="14dp"
+            android:paddingTop="8dp"
+            android:paddingRight="14dp"
+            android:paddingBottom="8dp">
 
             <TextView
+                android:id="@+id/infoMain"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="—"
+                android:textColor="#FFF5F0EA"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/infoSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:paddingTop="2dp"
+                android:text="—"
+                android:textColor="#BBFFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <com.yangkim.logcamera.HistogramView
+            android:id="@+id/histogram"
+            android:layout_width="112dp"
+            android:layout_height="52dp"
+            android:layout_gravity="top|start"
+            android:layout_marginLeft="12dp"
+            android:layout_marginTop="66dp" />
+
+        <TextView
+            android:id="@+id/recTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="72dp"
+            android:layout_marginRight="12dp"
+            android:background="@drawable/chip_bg"
+            android:fontFamily="monospace"
+            android:paddingLeft="10dp"
+            android:paddingTop="3dp"
+            android:paddingRight="10dp"
+            android:paddingBottom="3dp"
+            android:text="● 00:00"
+            android:textColor="#FFFF6B57"
+            android:textSize="15sp"
+            android:visibility="gone" />
+
+        <!-- 줌 레버 + 현재 화각 -->
+        <LinearLayout
+            android:id="@+id/leverBox"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginLeft="6dp"
+            android:layout_marginRight="6dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/focalLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="EV"
-                android:textColor="#CCFFFFFF"
+                android:background="@drawable/chip_bg"
+                android:fontFamily="monospace"
+                android:paddingLeft="8dp"
+                android:paddingTop="3dp"
+                android:paddingRight="8dp"
+                android:paddingBottom="3dp"
+                android:text="24mm"
+                android:textColor="#FFFFE2C4"
                 android:textSize="13sp" />
 
-            <SeekBar
-                android:id="@+id/evBar"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1" />
-
-            <TextView
-                android:id="@+id/evValue"
-                android:layout_width="44dp"
-                android:layout_height="wrap_content"
-                android:gravity="end"
-                android:text="0.0"
-                android:textColor="#CCFFFFFF"
-                android:textSize="13sp" />
+            <com.yangkim.logcamera.ZoomLever
+                android:id="@+id/zoomLever"
+                android:layout_width="52dp"
+                android:layout_height="220dp"
+                android:layout_marginTop="6dp" />
         </LinearLayout>
 
+        <!-- 버튼: 세로는 아래, 가로는 오른쪽 -->
         <LinearLayout
+            android:id="@+id/controlBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="#55000000"
             android:gravity="center"
-            android:orientation="horizontal"
-            android:paddingTop="10dp">
-
-            <TextView
-                android:id="@+id/btnMode"
-                style="@style/Chip"
-                android:layout_width="104dp"
-                android:layout_height="wrap_content"
-                android:text="영상" />
-
-            <View
-                android:id="@+id/shutter"
-                android:layout_width="78dp"
-                android:layout_height="78dp"
-                android:layout_marginLeft="28dp"
-                android:layout_marginRight="28dp"
-                android:background="@drawable/shutter_video" />
-
-            <TextView
-                android:id="@+id/btnEdit"
-                style="@style/Chip"
-                android:layout_width="104dp"
-                android:layout_height="wrap_content"
-                android:text="LUT 만들기" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- LUT 만들기 패널 -->
-    <LinearLayout
-        android:id="@+id/editorPanel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="@drawable/panel_bg"
-        android:clickable="true"
-        android:orientation="vertical"
-        android:padding="14dp"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/editorTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingBottom="6dp"
-            android:text="LUT 만들기"
-            android:textColor="#FFFFE2C4"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="260dp">
+            android:orientation="vertical"
+            android:padding="6dp">
 
             <LinearLayout
-                android:id="@+id/sliderContainer"
-                android:layout_width="match_parent"
+                android:id="@+id/focalRow"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical" />
-        </ScrollView>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingTop="10dp">
-
-            <TextView android:id="@+id/btnEdCancel" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="취소" />
-            <TextView android:id="@+id/btnEdReset" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="초기화" />
-            <TextView android:id="@+id/btnEdExport" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="내보내기" />
-            <TextView android:id="@+id/btnEdSaveAs" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="새로 저장" />
-            <TextView android:id="@+id/btnEdSave" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="저장" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- LUT 선택 패널 -->
-    <LinearLayout
-        android:id="@+id/lookPanel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="@drawable/panel_bg"
-        android:clickable="true"
-        android:orientation="vertical"
-        android:padding="14dp"
-        android:visibility="gone">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingBottom="8dp"
-            android:text="LUT 선택  ·  내가 만든 LUT는 길게 눌러 삭제"
-            android:textColor="#FFFFE2C4"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="280dp">
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="horizontal" />
 
             <LinearLayout
-                android:id="@+id/lookContainer"
-                android:layout_width="match_parent"
+                android:id="@+id/settingsRow"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical" />
-        </ScrollView>
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="horizontal">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingTop="10dp">
+                <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30p" />
+                <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
+                <TextView android:id="@+id/btnAe" style="@style/Ctl" android:text="AE" />
+                <TextView android:id="@+id/btnMode" style="@style/Ctl" android:text="영상" />
+            </LinearLayout>
 
-            <TextView android:id="@+id/btnImport" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="＋ .cube 가져오기" />
-            <TextView android:id="@+id/btnLookClose" style="@style/PanelButton"
-                android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="닫기" />
+            <LinearLayout
+                android:id="@+id/shutterRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/thumb"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="10dp"
+                    android:background="@drawable/chip_bg"
+                    android:scaleType="centerCrop" />
+
+                <View
+                    android:id="@+id/shutter"
+                    android:layout_width="76dp"
+                    android:layout_height="76dp"
+                    android:layout_margin="10dp"
+                    android:background="@drawable/shutter_video" />
+
+                <TextView
+                    android:id="@+id/btnCamera"
+                    style="@style/Ctl"
+                    android:layout_width="64dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="10dp"
+                    android:text="후면" />
+            </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
+    </FrameLayout>
 </FrameLayout>
