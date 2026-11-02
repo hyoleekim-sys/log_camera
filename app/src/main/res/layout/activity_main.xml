@@ -175,7 +175,8 @@
                 android:gravity="center"
                 android:orientation="horizontal">
 
-                <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30p" />
+                <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="1080p" />
+                <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30fps" />
                 <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
                 <TextView android:id="@+id/btnMode" style="@style/Ctl" android:text="영상" />
                 <TextView android:id="@+id/btnGrade" style="@style/Ctl" android:text="보정" />

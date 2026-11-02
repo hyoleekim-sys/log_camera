@@ -74,6 +74,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val stabModes: IntArray,
         /** 이 카메라 안의 실제 렌즈들 (후면 광각/초광각 등). 줌 배율로 전환. */
         val lenses: List<Lens>,
+        /** 4K(3840x2160) 스트림이 되면 그 크기, 안 되면 null */
+        val size4k: Size? = null,
         /** 셔터·ISO를 직접 정할 수 있는지 */
         val manualSensor: Boolean = false,
         val isoMin: Int = 50,
@@ -202,6 +204,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     zoomRatioKey = zKey,
                     fpsRanges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList() ?: emptyList(),
                     previewSize = pick16x9(previewSizes, 1920),
+                    size4k = (map.getOutputSizes(android.graphics.SurfaceTexture::class.java) ?: previewSizes)
+                        .firstOrNull { it.width == 3840 && it.height == 2160 },
                     jpegSize = pick16x9(jpegSizes, 4096),
                     activeArray = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: Rect(0, 0, 4000, 3000),
                     maxAf = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,

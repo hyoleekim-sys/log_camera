@@ -71,6 +71,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var settingsRow: LinearLayout
     private lateinit var shutterRow: LinearLayout
     private lateinit var btnFps: TextView
+    private lateinit var btnRes: TextView
+    private var res4k = false
     private lateinit var btnWb: TextView
     private lateinit var btnAe: TextView
     private lateinit var btnMode: TextView
@@ -294,11 +296,34 @@ class MainActivity : Activity(), CameraEngine.Callback {
     }
 
     /** 미리보기 서피스 크기가 맞을 때만 카메라를 엽니다. */
+    /** 카메라에서 받는 영상 크기: 4K 선택 시 3840x2160, 아니면 1080p. */
+    private fun streamSize(c: CameraEngine.Cam): Size =
+        if (res4k && c.size4k != null) c.size4k else c.previewSize
+
+    /** 녹화 비트레이트 */
+    private fun bitrate(): Int = when {
+        res4k && fps >= 60 -> 80_000_000
+        res4k -> 50_000_000
+        fps >= 60 -> 30_000_000
+        else -> 20_000_000
+    }
+
+    /** 이 폰의 H.264 인코더가 이 크기를 녹화할 수 있는지 */
+    private fun encoderSupports(w: Int, h: Int, f: Int): Boolean = try {
+        android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+            info.isEncoder && info.supportedTypes.any { it.equals("video/avc", true) } &&
+                info.getCapabilitiesForType("video/avc").videoCapabilities.let { vc ->
+                    vc.isSizeSupported(w, h) && vc.areSizeAndRateSupported(w, h, f.toDouble())
+                }
+        }
+    } catch (e: Exception) { false }
+
     private fun maybeStart() {
         val c = cam ?: return
         if (started || !glReady || !isResumedNow || !has(Manifest.permission.CAMERA)) return
         started = true
-        renderer.configure(c.previewSize.width, c.previewSize.height, c.sensorOrientation)
+        val size = streamSize(c)
+        renderer.configure(size.width, size.height, c.sensorOrientation)
         engine.open(c, renderer.cameraSurface, videoMode)
     }
 
@@ -406,7 +431,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
         (btnCamera.parent as? LinearLayout)?.removeView(btnCamera)
         val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        val small = listOf(btnFps, btnWb, btnMode, btnGrade, btnCamera)
+        val small = listOf(btnRes, btnFps, btnWb, btnMode, btnGrade, btnCamera)
         if (land) {
             settingsRow.orientation = LinearLayout.HORIZONTAL
             topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap))
@@ -504,6 +529,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         settingsRow = findViewById(R.id.settingsRow)
         shutterRow = findViewById(R.id.shutterRow)
         btnFps = findViewById(R.id.btnFps)
+        btnRes = findViewById(R.id.btnRes)
         btnWb = findViewById(R.id.btnWb)
         btnAe = findViewById(R.id.btnAe)
         btnMode = findViewById(R.id.btnMode)
@@ -533,6 +559,28 @@ class MainActivity : Activity(), CameraEngine.Callback {
             engine.fps = fps
             updateShutterPriority()
             engine.requestUpdate()
+            updateButtons()
+        }
+
+        btnRes.setOnClickListener {
+            val c = cam ?: return@setOnClickListener
+            if (!videoMode || recorder.isRecording) return@setOnClickListener
+            if (!res4k) {
+                val s = c.size4k
+                if (s == null) { toast("이 카메라는 4K가 막혀 있어요"); return@setOnClickListener }
+                // 세로로 세워 저장하므로 2160x3840도 녹화 가능한지 확인
+                val portrait = c.sensorOrientation % 180 != 0
+                val (w, h) = if (portrait) Pair(s.height, s.width) else Pair(s.width, s.height)
+                if (!encoderSupports(w, h, fps)) {
+                    toast("이 폰의 인코더가 4K ${fps}fps 녹화를 지원하지 않아요")
+                    return@setOnClickListener
+                }
+            }
+            res4k = !res4k
+            // 받는 영상 크기가 바뀌므로 카메라를 다시 엶
+            engine.close()
+            started = false
+            maybeStart()
             updateButtons()
         }
 
@@ -641,6 +689,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val c = cam
         btnFps.text = "${fps}fps"
         btnFps.alpha = if (videoMode) 1f else 0.35f
+        btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
+        btnRes.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
         setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
         btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
@@ -812,7 +862,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         } else {
             try {
                 val (w, h) = renderer.outputSize()
-                val surface = recorder.start(w, h, fps, engine.bitrate(), videoRotation(c), has(Manifest.permission.RECORD_AUDIO))
+                val surface = recorder.start(w, h, fps, bitrate(), videoRotation(c), has(Manifest.permission.RECORD_AUDIO))
                 renderer.setEncoderSurface(surface)
                 recordStart = SystemClock.elapsedRealtime()
                 main.post(recTick)
@@ -1144,14 +1194,14 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private fun updateInfoSub() {
         val c = cam
-        val res = if (c != null) "${minOf(c.previewSize.width, c.previewSize.height)}p" else "—"
+        val res = if (c == null) "—" else if (res4k && c.size4k != null) "4K" else "${minOf(c.previewSize.width, c.previewSize.height)}p"
         val bat = (getSystemService(BATTERY_SERVICE) as BatteryManager)
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val free = try {
             StatFs(Environment.getExternalStorageDirectory().path).availableBytes
         } catch (e: Exception) { 0L }
         infoSub.text = if (videoMode) {
-            val bytesPerSec = engine.bitrate() / 8L + 24_000L
+            val bytesPerSec = bitrate() / 8L + 24_000L
             val mins = free / bytesPerSec / 60
             String.format(Locale.US, "%s · %dfps · 남은 %d시간 %02d분 · 배터리 %d%%", res, fps, mins / 60, mins % 60, bat)
         } else {
