@@ -58,6 +58,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var focalLabel: TextView
     private lateinit var zoomLever: ZoomLever
     private lateinit var controlBar: LinearLayout
+    private lateinit var topControls: LinearLayout
     private lateinit var focalRow: LinearLayout
     private lateinit var settingsRow: LinearLayout
     private lateinit var shutterRow: LinearLayout
@@ -304,16 +305,31 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
-    /** 세로: 버튼이 아래에 가로로. 가로: 버튼이 오른쪽에 세로로. */
+    /**
+     * 세로: 화각·설정·셔터 줄이 모두 아래.
+     * 가로: 화각·설정은 위쪽에 가로로, 셔터 줄은 오른쪽 세로, 레버는 셔터 바로 왼쪽.
+     */
     private fun arrangeControls(land: Boolean) {
-        controlBar.orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        for (row in listOf(focalRow, settingsRow, shutterRow)) {
-            row.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        (focalRow.parent as? LinearLayout)?.removeView(focalRow)
+        (settingsRow.parent as? LinearLayout)?.removeView(settingsRow)
+        focalRow.orientation = LinearLayout.HORIZONTAL
+        settingsRow.orientation = LinearLayout.HORIZONTAL
+        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
+        if (land) {
+            topControls.addView(focalRow, LinearLayout.LayoutParams(wrap, wrap))
+            topControls.addView(settingsRow, LinearLayout.LayoutParams(wrap, wrap).apply { leftMargin = dp(12) })
+            topControls.visibility = View.VISIBLE
+        } else {
+            controlBar.addView(focalRow, 0, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
+            controlBar.addView(settingsRow, 1, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
+            topControls.visibility = View.GONE
         }
+        shutterRow.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        controlBar.orientation = LinearLayout.VERTICAL
         val cl = controlBar.layoutParams as FrameLayout.LayoutParams
         if (land) {
             cl.width = FrameLayout.LayoutParams.WRAP_CONTENT
-            cl.height = FrameLayout.LayoutParams.MATCH_PARENT
+            cl.height = FrameLayout.LayoutParams.WRAP_CONTENT
             cl.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         } else {
             cl.width = FrameLayout.LayoutParams.MATCH_PARENT
@@ -322,7 +338,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
         controlBar.layoutParams = cl
         val ll = leverBox.layoutParams as FrameLayout.LayoutParams
-        ll.gravity = if (land) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.END or Gravity.CENTER_VERTICAL
+        ll.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        ll.rightMargin = if (land) dp(112) else dp(6)
         leverBox.layoutParams = ll
     }
 
@@ -343,6 +360,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         focalLabel = findViewById(R.id.focalLabel)
         zoomLever = findViewById(R.id.zoomLever)
         controlBar = findViewById(R.id.controlBar)
+        topControls = findViewById(R.id.topControls)
         focalRow = findViewById(R.id.focalRow)
         settingsRow = findViewById(R.id.settingsRow)
         shutterRow = findViewById(R.id.shutterRow)
@@ -384,10 +402,16 @@ class MainActivity : Activity(), CameraEngine.Callback {
             updateButtons()
         }
 
+        // AE 잠금: 길게 눌러야 바뀜 (실수로 눌리지 않게)
         btnAe.setOnClickListener {
+            toast(if (engine.aeLock) "길게 누르면 AE 잠금 해제" else "길게 누르면 AE 잠금")
+        }
+        btnAe.setOnLongClickListener {
             engine.aeLock = !engine.aeLock
             engine.requestUpdate()
             updateButtons()
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            true
         }
 
         btnMode.setOnClickListener {
@@ -437,7 +461,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             override fun onLongPress(e: MotionEvent) {
                 engine.clearMetering()
                 focusRing.visibility = View.INVISIBLE
-                toast("초점·노출 자동")
+                toast("초점 자동")
             }
         })
         preview.setOnTouchListener { _, ev -> detector.onTouchEvent(ev) }

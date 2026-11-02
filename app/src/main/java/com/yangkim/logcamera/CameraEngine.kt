@@ -323,7 +323,6 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val r = regions
         if (r != null) {
             if (c.maxAf > 0) b.set(CaptureRequest.CONTROL_AF_REGIONS, r)
-            if (c.maxAe > 0 && !aeLock) b.set(CaptureRequest.CONTROL_AE_REGIONS, r)
         }
     }
 
@@ -363,7 +362,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         return ((k.coerceIn(2000f, 10000f) / 100f).roundToInt() * 100)
     }
 
-    /** 화면 좌표(센서 기준 0..1)로 초점·노출 지점. */
+    /** 화면 좌표(센서 기준 0..1)로 초점 지점 (노출은 건드리지 않음). */
     fun setMeteringPoint(nx: Float, ny: Float) {
         val c = cam ?: return
         val a = c.activeArray

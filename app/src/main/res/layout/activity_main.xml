@@ -97,6 +97,18 @@
             android:textSize="15sp"
             android:visibility="gone" />
 
+        <!-- 가로일 때: 화각·설정 버튼이 위쪽에 가로로 -->
+        <LinearLayout
+            android:id="@+id/topControls"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="62dp"
+            android:layout_marginRight="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone" />
+
         <!-- 줌 레버 + 현재 화각 -->
         <LinearLayout
             android:id="@+id/leverBox"
