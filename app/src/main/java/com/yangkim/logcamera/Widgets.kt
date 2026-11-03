@@ -25,6 +25,7 @@ class ZoomLever(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private var value = 0f
     private var startY = 0f
     private var startValue = 0f
+    private var lastTick = 0f
     private var spring: ValueAnimator? = null
     private val d = resources.displayMetrics.density
 
@@ -63,12 +64,19 @@ class ZoomLever(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 startY = e.y
                 startValue = value
+                lastTick = value
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val t = travel()
                 if (t > 0f) {
                     value = (startValue + (startY - e.y) / t).coerceIn(-1f, 1f)
+                    // 조금씩 밀 때마다 약한 진동 (끝에 닿으면 한 번 더)
+                    if (abs(value - lastTick) >= 0.12f || (abs(value) >= 1f && abs(lastTick) < 1f)) {
+                        lastTick = value
+                        performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+                    }
                     onChange?.invoke(value)
                     invalidate()
                 }
@@ -165,6 +173,7 @@ class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val d = resources.displayMetrics.density
     private val pad = 14f * d
     private var active = -1
+    private var lastTick = 0f
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88000000.toInt() }
     private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33FFFFFF; strokeWidth = 1f * d }
     private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x44FFFFFF; strokeWidth = 1f * d }
@@ -203,6 +212,8 @@ class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 val x = ((e.x - pad) / (width - 2 * pad)).coerceIn(0f, 1f)
                 active = (x * 4f + 0.5f).toInt().coerceIn(0, 4)
+                lastTick = points[active]
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 move(e.y)
                 return true
             }
@@ -219,6 +230,10 @@ class CurveView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private fun move(y: Float) {
         if (active < 0) return
         points[active] = ((height - pad - y) / (height - 2 * pad)).coerceIn(0f, 1f)
+        if (abs(points[active] - lastTick) >= 0.04f) {
+            lastTick = points[active]
+            performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+        }
         invalidate()
         onChange?.invoke()
     }

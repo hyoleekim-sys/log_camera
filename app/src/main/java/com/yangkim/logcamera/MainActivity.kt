@@ -1336,13 +1336,24 @@ class MainActivity : Activity(), CameraEngine.Callback {
             bar.max = 200
             bar.progress = ((def.get(e) + 1f) * 100f).roundToInt().coerceIn(0, 200)
             bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                var lastTick = 0
                 override fun onProgressChanged(sb: android.widget.SeekBar, p: Int, fromUser: Boolean) {
                     if (!fromUser) return
+                    // 5칸 움직일 때마다 약한 진동, 0 지점은 조금 더 또렷하게
+                    if (abs(p - lastTick) >= 5 || (p == 100 && lastTick != 100)) {
+                        lastTick = p
+                        sb.performHapticFeedback(
+                            if (p == 100) android.view.HapticFeedbackConstants.CLOCK_TICK
+                            else android.view.HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+                    }
                     def.set(e, p / 100f - 1f)
                     refresh()
                     applyGrade(e)
                 }
-                override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar) {
+                    lastTick = sb.progress
+                    sb.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                }
                 override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
             })
             // 이름을 누르면 0으로
