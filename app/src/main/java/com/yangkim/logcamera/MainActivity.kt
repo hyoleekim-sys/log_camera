@@ -215,24 +215,17 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
 
         rearSelfie = RearSelfie(this, renderer,
-            onStateChanged = { runOnUiThread { updateButtons() } },
+            onStateChanged = { runOnUiThread { syncSelfieUi(); updateButtons() } },
             onShutter = { runOnUiThread { onShutter() } },
             onMessage = { m -> runOnUiThread { toast(m) } })
+        // 후면 셀피: 끔 → 듀얼(바깥은 미리보기) → 셀피(바깥에서 전부 조작) → 끔
         btnSelfie.setOnClickListener {
-            if (!rearSelfie.active) {
-                // 후면 셀피는 후면 광각으로
-                val c = cam
-                if (c != null && c.front && !recorder.isRecording) {
-                    val target = entries.firstOrNull { !cams[it.camIndex].front }
-                    if (target != null) {
-                        engine.close()
-                        started = false
-                        selectCamera(target.camIndex)
-                        target.zoom?.let { setZoom(it) }
-                    }
-                }
+            when {
+                !rearSelfie.active -> { rearSelfie.fullControl = false; openSelfie() }
+                !rearSelfie.fullControl -> rearSelfie.fullControl = true
+                else -> rearSelfie.close()
             }
-            rearSelfie.toggle()
+            syncSelfieUi()
         }
         setupControls()
         addHaptics(uiRoot)
@@ -506,6 +499,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     }
 
     private fun applyUiOrientation(animate: Boolean) {
+        if (uiInCover) return
         val w = root.width - root.paddingLeft - root.paddingRight
         val h = root.height - root.paddingTop - root.paddingBottom
         if (w <= 0 || h <= 0) return
@@ -739,12 +733,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
             if (!videoMode || recorder.isRecording) return@setOnClickListener
             if (btMic() == null) {
                 micMode = 0
-                toast("블루투스 마이크가 연결돼 있지 않아 폰 마이크로 녹음해요")
+                toast("유선·블루투스 마이크가 연결돼 있지 않아 폰 마이크로 녹음해요")
             } else {
                 micMode = (micMode + 1) % 3
                 toast(when (micMode) {
-                    1 -> "블루투스 마이크로 녹음"
-                    2 -> "폰 + 블루투스 마이크 같이 녹음"
+                    1 -> "외부(유선·블루투스) 마이크만 녹음"
+                    2 -> "폰 + 외부 마이크 같이 녹음"
                     else -> "폰 마이크로 녹음"
                 })
             }
@@ -792,22 +786,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         modePhoto.setOnClickListener { setMode(video = false) }
         modeVideo.setOnClickListener { setMode(video = true) }
 
-        btnCamera.setOnClickListener {
-            if (entries.size < 2) return@setOnClickListener
-            val next = entries[(currentEntryIndex() + 1) % entries.size]
-            if (next.camIndex == camIndex) {
-                next.zoom?.let { animateZoomTo(it) }
-            } else {
-                if (recorder.isRecording) {
-                    toast("녹화 중에는 앞뒤 카메라를 바꿀 수 없어요")
-                    return@setOnClickListener
-                }
-                engine.close()
-                started = false
-                selectCamera(next.camIndex)
-                next.zoom?.let { setZoom(it) }
-            }
-        }
+        // 카메라 버튼: 전면 ↔ 후면만
+        btnCamera.setOnClickListener { flipFacing() }
 
         thumb.setOnClickListener {
             val u = lastUri ?: return@setOnClickListener
@@ -928,18 +908,26 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_PERMS)
                 return
             }
-            monitor.gain = monitorVol / 5f
+            monitor.gain = inputGain()
             monitor.setExternal(recorder.isRecording, null)
             monitor.start(micsForRecording().firstOrNull())
         }
         updateMonitorUi()
     }
 
+    /** 수음 크기: 5 = 0dB, 한 칸 2dB (−10 ~ +10dB) */
+    private fun inputGainDb() = (monitorVol - 5) * 2
+
+    private fun inputGain() = 10f.pow(inputGainDb() / 20f)
+
     private fun changeMonitorVol(d: Int) {
         monitorVol = (monitorVol + d).coerceIn(0, 10)
-        monitor.gain = monitorVol / 5f
-        volLabel.text = "음량 $monitorVol"
+        monitor.gain = inputGain()
+        recorder.gain = inputGain()
+        volLabel.text = gainLabel()
     }
+
+    private fun gainLabel() = "수음 " + (if (inputGainDb() > 0) "+" else "") + "${inputGainDb()}dB"
 
     private fun updateMonitorUi() {
         val on = monitor.running
@@ -947,7 +935,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnMonitor.alpha = if (on || headphonesConnected()) 1f else 0.4f
         levelMeter.visibility = if (on) View.VISIBLE else View.GONE
         volumeRow.visibility = if (on) View.VISIBLE else View.GONE
-        volLabel.text = "음량 $monitorVol"
+        volLabel.text = gainLabel()
     }
 
     // ───── 전면 셀피 화면 조명 (5단계) ─────
@@ -979,11 +967,44 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     // ───── 마이크 ─────
 
+    /** 유선·USB·블루투스 마이크 */
+    private fun isExternalMic(d: android.media.AudioDeviceInfo) = isBt(d) ||
+        d.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+        d.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET ||
+        d.type == android.media.AudioDeviceInfo.TYPE_USB_DEVICE
+
+    private fun micName(d: android.media.AudioDeviceInfo?): String = when {
+        d == null -> "기본 마이크"
+        d.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "폰 마이크"
+        isBt(d) -> "블루투스(${d.productName})"
+        else -> "유선(${d.productName})"
+    }
+
+    /** 실제로 잡힌 마이크를 알려주고, 고른 것과 다르면 경고 */
+    private fun reportRouted(wanted: Int, devs: List<android.media.AudioDeviceInfo?>) {
+        val names = devs.map { micName(it) }.distinct()
+        val hasPhone = devs.any { it?.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC }
+        val hasExt = devs.any { it != null && isExternalMic(it) }
+        val msg = "녹음 마이크: " + names.joinToString(" + ")
+        val wrong = when (wanted) {
+            0 -> hasExt
+            1 -> hasPhone || !hasExt
+            else -> !(hasPhone && hasExt)
+        }
+        toast(if (wrong) "$msg  (고른 설정과 달라요 — 폰이 마이크를 바꿔 잡았어요)" else msg)
+        lastRouted = names.joinToString("+")
+        updateInfoSub()
+    }
+
+    private var lastRouted = ""
+
     private fun isBt(d: android.media.AudioDeviceInfo) =
         d.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO || d.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
 
     private fun btMic(): android.media.AudioDeviceInfo? =
-        audioManager.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).firstOrNull { isBt(it) }
+        audioManager.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).let { list ->
+            list.firstOrNull { isBt(it) } ?: list.firstOrNull { isExternalMic(it) }
+        }
 
     private fun phoneMic(): android.media.AudioDeviceInfo? =
         audioManager.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)
@@ -1005,7 +1026,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     /** 블루투스 마이크를 쓸 땐 통화용 경로를 켜야 마이크가 열림 */
     private fun applyMicRoute() {
         try {
-            if (effectiveMicMode() != 0 && isResumedNow) {
+            // 블루투스 마이크만 통화 경로가 필요 (유선은 그냥 열림)
+            if (effectiveMicMode() != 0 && isResumedNow && btMic()?.let { isBt(it) } == true) {
                 val dev = audioManager.availableCommunicationDevices.firstOrNull { isBt(it) }
                 if (dev != null) audioManager.setCommunicationDevice(dev)
             } else {
@@ -1023,6 +1045,43 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
         updateMonitorUi()
         updateButtons()
+    }
+
+    // ───── 후면 셀피: 듀얼 / 셀피 ─────
+
+    private var uiInCover = false
+
+    private fun openSelfie() {
+        val c = cam
+        if (c != null && c.front && !recorder.isRecording) {
+            val target = entries.firstOrNull { !cams[it.camIndex].front }
+            if (target != null) {
+                engine.close()
+                started = false
+                selectCamera(target.camIndex)
+                target.zoom?.let { setZoom(it) }
+            }
+        }
+        rearSelfie.open()
+    }
+
+    /** 셀피 모드면 조작판(uiRoot)을 바깥 화면으로 옮기고, 아니면 안쪽으로 되돌림 */
+    private fun syncSelfieUi() {
+        val host = rearSelfie.container
+        val wantCover = rearSelfie.active && rearSelfie.fullControl && host != null
+        if (wantCover && !uiInCover) {
+            (uiRoot.parent as? android.view.ViewGroup)?.removeView(uiRoot)
+            uiRoot.rotation = 0f
+            uiRoot.alpha = 1f
+            host!!.addView(uiRoot, FrameLayout.LayoutParams(-1, -1))
+            uiInCover = true
+            arrangeControls(false)
+        } else if (!wantCover && uiInCover) {
+            (uiRoot.parent as? android.view.ViewGroup)?.removeView(uiRoot)
+            root.addView(uiRoot, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+            uiInCover = false
+            root.post { applyUiOrientation(animate = false) }
+        }
     }
 
     private fun setMode(video: Boolean) {
@@ -1057,7 +1116,11 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
         btnAspect.text = if (aspect43) "4:3" else "16:9"
         btnSelfie.visibility = if (rearSelfie.available || rearSelfie.active) View.VISIBLE else View.GONE
-        btnSelfie.text = if (rearSelfie.active) "셀피 끝" else "셀피"
+        btnSelfie.text = when {
+            !rearSelfie.active -> "셀피 끔"
+            rearSelfie.fullControl -> "셀피"
+            else -> "듀얼"
+        }
         btnSelfie.setBackgroundResource(if (rearSelfie.active) R.drawable.chip_selected_bg else R.drawable.chip_bg)
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
 
@@ -1079,7 +1142,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         recTime.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
         recBorder.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
         rearSelfie.setRecording(recorder.isRecording)
-        btnMic.text = when (effectiveMicMode()) { 1 -> "마이크 BT"; 2 -> "폰+BT"; else -> "마이크 폰" }
+        btnMic.text = when (effectiveMicMode()) { 1 -> "외부 마이크"; 2 -> "폰+외부"; else -> "폰 마이크" }
         btnMic.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
         val lock = if (recorder.isRecording) 0.35f else 1f
         findViewById<View>(R.id.modeToggle).alpha = lock
@@ -1178,7 +1241,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val c = cam ?: return
         val mm = (c.eq1 * zoom).roundToInt()
         focalLabel.text = String.format(Locale.US, "%dmm  %.1fx", mm, zoom)
-        entries.getOrNull(currentEntryIndex())?.let { btnCamera.text = it.label }
+        btnCamera.text = if (c.front) "전면" else "후면"
         for ((i, tv) in focalViews.withIndex()) {
             val opt = focalOptions.getOrNull(i) ?: continue
             val on = opt.enabled && abs(opt.zoom - zoom) / opt.zoom < 0.03f
@@ -1244,6 +1307,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 if (!has(Manifest.permission.RECORD_AUDIO)) toast("마이크 권한이 없어 소리 없이 녹화돼요")
                 monitor.setExternal(true, null)
                 recorder.onPcm = { b, n -> monitor.feed(b, n) }
+                recorder.gain = inputGain()
+                val wanted = effectiveMicMode()
+                recorder.onRouted = { devs -> runOnUiThread { reportRouted(wanted, devs) } }
                 val surface = recorder.start(w, h, fps, bitrate(), videoRotation(c), mics)
                 renderer.setEncoderSurface(surface)
                 recordStart = SystemClock.elapsedRealtime()

@@ -31,6 +31,10 @@ class AvRecorder(private val ctx: Context) {
     var onWarning: ((String) -> Unit)? = null
     /** 녹음되는 소리(섞인 뒤)를 받아 볼 곳 — 모니터용 */
     @Volatile var onPcm: ((ShortArray, Int) -> Unit)? = null
+    /** 수음 크기 (녹음되는 소리 자체를 키우고 줄임) */
+    @Volatile var gain = 1f
+    /** 실제로 녹음에 잡힌 마이크 이름들 */
+    var onRouted: ((List<AudioDeviceInfo?>) -> Unit)? = null
 
     @Volatile var isRecording = false
         private set
@@ -226,6 +230,7 @@ class AvRecorder(private val ctx: Context) {
         for (r in records) try { r.startRecording() } catch (e: Exception) {}
 
         // 두 마이크가 같은 장치로 잡혔으면 하나만 사용 (동시 녹음이 막힌 경우)
+        try { Thread.sleep(60) } catch (e: Exception) {}
         if (records.size > 1) {
             val a = records[0].routedDevice?.id
             val b = records[1].routedDevice?.id
@@ -237,6 +242,7 @@ class AvRecorder(private val ctx: Context) {
             }
         }
 
+        onRouted?.invoke(records.map { it.routedDevice })
         var firstUs = -1L
         var samples = 0L
         val info = MediaCodec.BufferInfo()
@@ -311,13 +317,17 @@ class AvRecorder(private val ctx: Context) {
         val valid = records.indices.filter { counts[it] > 0 }
         if (valid.isEmpty()) return 0
         if (valid.size == 1) {
-            System.arraycopy(bufs[valid[0]], 0, out, 0, counts[valid[0]])
+            val src = bufs[valid[0]]
+            val g = gain
+            for (j in 0 until counts[valid[0]]) {
+                out[j] = (src[j] * g).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            }
             return counts[valid[0]]
         }
         for (j in 0 until n) {
             var s = 0
             for (i in valid) s += bufs[i][j]
-            s = (s * 0.75f).toInt()
+            s = (s * 0.75f * gain).toInt()
             out[j] = s.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
         }
         return n

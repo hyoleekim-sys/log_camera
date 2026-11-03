@@ -21,7 +21,7 @@ import kotlin.math.sqrt
 class AudioMonitor(private val onLevel: (rmsDb: Float, peakDb: Float) -> Unit) {
     @Volatile var running = false
         private set
-    /** 0.0 ~ 2.0 */
+    /** 수음 크기 (녹화 중이 아닐 때 레벨·들리는 소리에 적용. 녹화 중엔 이미 적용된 소리가 들어옴) */
     @Volatile var gain = 1f
 
     @Volatile private var external = false
@@ -121,15 +121,15 @@ class AudioMonitor(private val onLevel: (rmsDb: Float, peakDb: Float) -> Unit) {
 
     private fun process(buf: ShortArray, n: Int) {
         if (out.size < n) out = ShortArray(n)
-        val g = gain
+        val g = if (external) 1f else gain
         var sum = 0.0
         var peak = 0
         for (i in 0 until n) {
-            val s = buf[i].toInt()
+            val s = (buf[i] * g).toInt().coerceIn(-32768, 32767)
             val a = abs(s)
             if (a > peak) peak = a
             sum += s.toDouble() * s
-            out[i] = (s * g).toInt().coerceIn(-32768, 32767).toShort()
+            out[i] = s.toShort()
         }
         try { track?.write(out, 0, n, AudioTrack.WRITE_NON_BLOCKING) } catch (e: Exception) {}
         // 레벨 (녹음되는 원래 크기 기준)

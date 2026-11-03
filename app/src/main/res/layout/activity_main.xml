@@ -128,7 +128,7 @@
                     android:paddingTop="5dp"
                     android:paddingBottom="5dp"
                     android:textSize="12sp"
-                    android:text="모니터" />
+                    android:text="사운드 모니터" />
 
                 <com.yangkim.logcamera.LevelMeter
                     android:id="@+id/levelMeter"
@@ -154,7 +154,7 @@
                     android:layout_height="wrap_content"
                     android:paddingLeft="4dp"
                     android:paddingRight="4dp"
-                    android:text="음량 5"
+                    android:text="수음 0dB"
                     android:textColor="#FFFFE2C4"
                     android:textSize="12sp" />
                 <TextView android:id="@+id/btnVolUp" style="@style/Ctl" android:minWidth="40dp"

@@ -38,6 +38,21 @@ class RearSelfie(
     private var area: WindowAreaInfo? = null
     private var session: WindowAreaSessionPresenter? = null
     private var border: View? = null
+    private var overlayShutter: View? = null
+    private var hintView: TextView? = null
+
+    /** 셀피 모드: 바깥 화면에 앱 조작 전체를 옮겨 올 자리 */
+    var container: FrameLayout? = null
+        private set
+
+    /** true = 셀피(바깥 화면에서 전부 조작), false = 듀얼(바깥은 미리보기만) */
+    var fullControl = false
+        set(v) {
+            field = v
+            overlayShutter?.visibility = if (v) View.GONE else View.VISIBLE
+            hintView?.visibility = if (v) View.GONE else View.VISIBLE
+            onStateChanged()
+        }
 
     /** 녹화 중 빨간 테두리 */
     fun setRecording(on: Boolean) {
@@ -83,8 +98,8 @@ class RearSelfie(
         scope.cancel()
     }
 
-    fun toggle() {
-        if (active) { close(); return }
+    fun open() {
+        if (active) return
         val a = area
         if (a == null || !available) {
             onMessage("이 폰은 바깥 화면 사용을 막아뒀거나, 지금 접혀 있어요")
@@ -102,6 +117,7 @@ class RearSelfie(
     fun close() {
         try { session?.close() } catch (e: Throwable) {}
         session = null
+        container = null
         renderer.setMirrorSurface(null, 0, 0)
         onStateChanged()
     }
@@ -115,6 +131,7 @@ class RearSelfie(
 
         override fun onSessionEnded(t: Throwable?) {
             session = null
+            container = null
             renderer.setMirrorSurface(null, 0, 0)
             onStateChanged()
             if (t != null) onMessage("바깥 화면이 닫혔어요")
@@ -154,6 +171,8 @@ class RearSelfie(
         val lp = FrameLayout.LayoutParams((64 * d).toInt(), (64 * d).toInt(), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
         lp.bottomMargin = (24 * d).toInt()
         root.addView(shutter, lp)
+        overlayShutter = shutter
+        shutter.visibility = if (fullControl) View.GONE else View.VISIBLE
         val hint = TextView(ctx)
         hint.text = "후면 셀피"
         hint.setTextColor(0xCCFFFFFF.toInt())
@@ -161,6 +180,12 @@ class RearSelfie(
         val hl = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
         hl.topMargin = (16 * d).toInt()
         root.addView(hint, hl)
+        hintView = hint
+        hint.visibility = if (fullControl) View.GONE else View.VISIBLE
+        // 셀피 모드에서 앱 조작판이 들어올 자리 (빨간 테두리보다 아래)
+        val host = FrameLayout(ctx)
+        root.addView(host, root.indexOfChild(b), FrameLayout.LayoutParams(-1, -1))
+        container = host
         return root
     }
 }
