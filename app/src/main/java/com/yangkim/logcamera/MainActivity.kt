@@ -451,7 +451,13 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val open = gradePanelOpen()
         insetTop = 0
         insetBottom = 0
-        if (open) {
+        renderer.mirrorInsetTop = 0
+        renderer.mirrorInsetBottom = 0
+        if (open && uiInCover) {
+            // 셀피(바깥 화면): 바깥 미리보기를 보정창 위로 줄여서
+            val panel = if (gradePanel.visibility == View.VISIBLE) gradePanel else gradeListPanel
+            renderer.mirrorInsetBottom = panel.height
+        } else if (open) {
             val panel = if (gradePanel.visibility == View.VISIBLE) gradePanel else gradeListPanel
             when (uiDeg) {
                 0 -> insetBottom = panel.height
@@ -766,8 +772,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
 
         btnWb.setOnClickListener {
-            engine.awbLock = !engine.awbLock
-            engine.requestUpdate()
+            val fixed = engine.setWbLock(!engine.awbLock)
+            if (engine.awbLock && !fixed) toast("이 카메라는 색 숫자 고정을 막아둬서, 렌즈가 바뀌면 색이 조금 달라질 수 있어요")
             updateButtons()
         }
 

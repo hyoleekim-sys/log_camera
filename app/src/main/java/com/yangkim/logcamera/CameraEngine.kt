@@ -89,6 +89,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val torchDefaultLevel: Int = 1,
         /** 셔터·ISO를 직접 정할 수 있는지 */
         val manualSensor: Boolean = false,
+        /** 색 보정값을 직접 정할 수 있는지 (화이트밸런스 숫자 고정) */
+        val manualPost: Boolean = false,
         val isoMin: Int = 50,
         val isoMax: Int = 3200,
         val expMaxNs: Long = 100_000_000L
@@ -133,6 +135,24 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
+    @Volatile private var lastGains: android.hardware.camera2.params.RggbChannelVector? = null
+    @Volatile private var lastTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
+    @Volatile private var lockedGains: android.hardware.camera2.params.RggbChannelVector? = null
+    @Volatile private var lockedTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
+
+    /** 화이트밸런스 잠금/해제. 잠글 땐 지금 색 보정값을 저장. 숫자 고정이 되면 true */
+    fun setWbLock(on: Boolean): Boolean {
+        if (on) {
+            lockedGains = lastGains
+            lockedTransform = lastTransform
+        } else {
+            lockedGains = null
+            lockedTransform = null
+        }
+        awbLock = on
+        requestUpdate()
+        return on && cam?.manualPost == true && lockedGains != null && lockedTransform != null
+    }
     /** 노출 보정 (EV). 자동 노출일 때 카메라에 전달 */
     @Volatile var evComp = 0f
     /** 플래시(계속 켜짐) */
@@ -243,6 +263,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     afModes = c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0),
                     stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0),
                     manualSensor = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR),
+                    manualPost = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING),
                     isoMin = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.lower ?: 50,
                     isoMax = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200,
                     expMaxNs = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper ?: 100_000_000L,
@@ -402,7 +423,17 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.SENSOR_SENSITIVITY, manualIso.coerceIn(c.isoMin, c.isoMax))
             b.set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / fps.coerceAtLeast(1))
         }
-        b.set(CaptureRequest.CONTROL_AWB_LOCK, awbLock)
+        val lg = lockedGains
+        val lt = lockedTransform
+        if (awbLock && c.manualPost && lg != null && lt != null) {
+            // 잠글 때의 색 보정값을 그대로 강제 → 렌즈가 바뀌어도 같은 색
+            b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+            b.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+            b.set(CaptureRequest.COLOR_CORRECTION_GAINS, lg)
+            b.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, lt)
+        } else {
+            b.set(CaptureRequest.CONTROL_AWB_LOCK, awbLock)
+        }
         val r = regions
         if (r != null) {
             if (c.maxAf > 0) b.set(CaptureRequest.CONTROL_AF_REGIONS, r)
@@ -432,6 +463,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             val exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            if (!awbLock) {
+                lastGains = gains
+                lastTransform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
+            }
             val k = if (gains != null && gains.blue > 0f) estimateKelvin(gains.red / gains.blue) else 0
             cb.onStats(exp, iso, k)
         }

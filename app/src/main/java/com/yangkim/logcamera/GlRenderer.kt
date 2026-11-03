@@ -44,6 +44,8 @@ class GlRenderer {
     private var mirrorTarget: Surface? = null
     private var mirrorW = 0
     private var mirrorH = 0
+    @Volatile var mirrorInsetTop = 0
+    @Volatile var mirrorInsetBottom = 0
 
     private var program = 0
     private var oesTex = 0
@@ -275,7 +277,10 @@ class GlRenderer {
                 GLES30.glViewport(0, 0, mirrorW, mirrorH)
                 GLES30.glClearColor(0f, 0f, 0f, 1f)
                 GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-                draw(previewMvp(mirrorW, mirrorH, flipX = true))
+                // 보정창이 열리면 그 위 공간에만 그림
+                val vh = (mirrorH - mirrorInsetTop - mirrorInsetBottom).coerceAtLeast(1)
+                GLES30.glViewport(0, mirrorInsetBottom, mirrorW, vh)
+                draw(previewMvp(mirrorW, vh, flipX = true))
                 EGL14.eglSwapBuffers(display, mirror)
                 makeCurrent(if (window != EGL14.EGL_NO_SURFACE) window else pbuffer)
             }
