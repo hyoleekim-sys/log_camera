@@ -110,6 +110,7 @@ class RearSelfie(
                 a.token, activity, { activity.runOnUiThread(it) }, callback
             )
         } catch (e: Throwable) {
+            CrashLog.save(activity, e)
             onMessage("바깥 화면을 열 수 없어요: ${e.message}")
         }
     }
@@ -124,8 +125,16 @@ class RearSelfie(
 
     private val callback = object : WindowAreaPresentationSessionCallback {
         override fun onSessionStarted(session: WindowAreaSessionPresenter) {
-            this@RearSelfie.session = session
-            session.setContentView(buildView(session))
+            try {
+                this@RearSelfie.session = session
+                session.setContentView(buildView(session))
+            } catch (e: Throwable) {
+                CrashLog.save(activity, e)
+                onMessage("바깥 화면을 열다가 오류가 났어요")
+                try { session.close() } catch (x: Throwable) {}
+                this@RearSelfie.session = null
+                container = null
+            }
             onStateChanged()
         }
 

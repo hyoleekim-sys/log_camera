@@ -161,6 +161,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         bindViews()
@@ -220,16 +221,30 @@ class MainActivity : Activity(), CameraEngine.Callback {
             onMessage = { m -> runOnUiThread { toast(m) } })
         // 후면 셀피: 끔 → 듀얼(바깥은 미리보기) → 셀피(바깥에서 전부 조작) → 끔
         btnSelfie.setOnClickListener {
-            when {
-                !rearSelfie.active -> { rearSelfie.fullControl = false; openSelfie() }
-                !rearSelfie.fullControl -> rearSelfie.fullControl = true
-                else -> rearSelfie.close()
+            try {
+                if (!rearSelfie.active) {
+                    rearSelfie.fullControl = true
+                    openSelfie()
+                } else {
+                    rearSelfie.close()
+                }
+                syncSelfieUi()
+            } catch (e: Throwable) {
+                CrashLog.save(this, e)
+                toast("셀피를 켜다가 오류가 났어요: ${e.message}")
             }
-            syncSelfieUi()
         }
         setupControls()
         addHaptics(uiRoot)
         updateButtons()
+        // 셀피 중 안쪽 큰 화면: 검게 + 터치 막기
+        innerBlocker = View(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            isClickable = true
+            visibility = View.GONE
+        }
+        root.addView(innerBlocker, FrameLayout.LayoutParams(-1, -1))
+        CrashLog.showIfAny(this)
 
         val need = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO).filter { !has(it) }
         if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), REQ_PERMS)
@@ -256,7 +271,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
         isResumedNow = false
         orientationListener.disable()
         rearSelfie.stop()
-        try { audioManager.clearCommunicationDevice() } catch (e: Exception) {}
+        try {
+            audioManager.clearCommunicationDevice()
+            if (commMode) { audioManager.mode = android.media.AudioManager.MODE_NORMAL; commMode = false }
+        } catch (e: Exception) {}
         if (monitor.running) { monitor.stop(); updateMonitorUi() }
         setLight(0)
         main.removeCallbacks(histogramTick)
@@ -997,6 +1015,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     }
 
     private var lastRouted = ""
+    private var commMode = false
 
     private fun isBt(d: android.media.AudioDeviceInfo) =
         d.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO || d.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
@@ -1029,9 +1048,17 @@ class MainActivity : Activity(), CameraEngine.Callback {
             // 블루투스 마이크만 통화 경로가 필요 (유선은 그냥 열림)
             if (effectiveMicMode() != 0 && isResumedNow && btMic()?.let { isBt(it) } == true) {
                 val dev = audioManager.availableCommunicationDevices.firstOrNull { isBt(it) }
-                if (dev != null) audioManager.setCommunicationDevice(dev)
+                if (dev != null) {
+                    audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+                    audioManager.setCommunicationDevice(dev)
+                    commMode = true
+                }
             } else {
                 audioManager.clearCommunicationDevice()
+                if (commMode) {
+                    audioManager.mode = android.media.AudioManager.MODE_NORMAL
+                    commMode = false
+                }
             }
         } catch (e: Exception) {}
     }
@@ -1050,6 +1077,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     // ───── 후면 셀피: 듀얼 / 셀피 ─────
 
     private var uiInCover = false
+    private lateinit var innerBlocker: View
 
     private fun openSelfie() {
         val c = cam
@@ -1068,7 +1096,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     /** 셀피 모드면 조작판(uiRoot)을 바깥 화면으로 옮기고, 아니면 안쪽으로 되돌림 */
     private fun syncSelfieUi() {
         val host = rearSelfie.container
-        val wantCover = rearSelfie.active && rearSelfie.fullControl && host != null
+        val wantCover = rearSelfie.active && host != null
+        innerBlocker.visibility = if (rearSelfie.active) View.VISIBLE else View.GONE
         if (wantCover && !uiInCover) {
             (uiRoot.parent as? android.view.ViewGroup)?.removeView(uiRoot)
             uiRoot.rotation = 0f
@@ -1078,7 +1107,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             arrangeControls(false)
         } else if (!wantCover && uiInCover) {
             (uiRoot.parent as? android.view.ViewGroup)?.removeView(uiRoot)
-            root.addView(uiRoot, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+            root.addView(uiRoot, root.indexOfChild(innerBlocker).coerceAtLeast(0), FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
             uiInCover = false
             root.post { applyUiOrientation(animate = false) }
         }
@@ -1116,11 +1145,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
         btnAspect.text = if (aspect43) "4:3" else "16:9"
         btnSelfie.visibility = if (rearSelfie.available || rearSelfie.active) View.VISIBLE else View.GONE
-        btnSelfie.text = when {
-            !rearSelfie.active -> "셀피 끔"
-            rearSelfie.fullControl -> "셀피"
-            else -> "듀얼"
-        }
+        btnSelfie.text = if (rearSelfie.active) "셀피 끝" else "셀피"
         btnSelfie.setBackgroundResource(if (rearSelfie.active) R.drawable.chip_selected_bg else R.drawable.chip_bg)
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
 

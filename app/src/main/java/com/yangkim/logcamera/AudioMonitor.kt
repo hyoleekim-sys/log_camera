@@ -81,31 +81,18 @@ class AudioMonitor(private val onLevel: (rmsDb: Float, peakDb: Float) -> Unit) {
             .build()
     } catch (e: Exception) { null }
 
-    @SuppressLint("MissingPermission")
     private fun startCapture(mic: AudioDeviceInfo?) {
         if (capturing) return
-        val r = try {
-            val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
-                .setAudioFormat(
-                    AudioFormat.Builder().setSampleRate(RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
-                )
-                .setBufferSizeInBytes(max(min * 2, FRAME * 4))
-                .build()
-        } catch (e: Exception) { null } ?: return
-        if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return }
-        if (mic != null) r.setPreferredDevice(mic)
+        val (r, k) = MicOpener.open(mic) ?: return
         rec = r
         capturing = true
         thread = Thread({
+            val raw = ShortArray(FRAME)
             val buf = ShortArray(FRAME)
             try { r.startRecording() } catch (e: Exception) {}
             while (capturing) {
-                val n = try { r.read(buf, 0, FRAME) } catch (e: Exception) { -1 }
-                if (n > 0) process(buf, n)
+                val c = try { r.read(raw, 0, FRAME / k) } catch (e: Exception) { -1 }
+                if (c > 0) process(buf, MicOpener.upsample(raw, c, k, buf))
             }
             try { r.stop() } catch (e: Exception) {}
             r.release()
@@ -146,6 +133,6 @@ class AudioMonitor(private val onLevel: (rmsDb: Float, peakDb: Float) -> Unit) {
 
     companion object {
         private const val RATE = 48000
-        private const val FRAME = 512
+        private const val FRAME = 480
     }
 }

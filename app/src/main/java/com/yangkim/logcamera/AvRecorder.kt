@@ -114,30 +114,18 @@ class AvRecorder(private val ctx: Context) {
         }
     }
 
+    /** 마이크별 배율: 48kHz면 1, 블루투스(16kHz)면 3 */
+    private val factors = ArrayList<Int>()
+
     @SuppressLint("MissingPermission")
     private fun setupAudio(mics: List<AudioDeviceInfo?>): Boolean {
         records.clear()
+        factors.clear()
         if (mics.isEmpty()) return false
         for (dev in mics) {
-            try {
-                val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                val src = if (dev != null && dev.type != AudioDeviceInfo.TYPE_BUILTIN_MIC)
-                    MediaRecorder.AudioSource.MIC else MediaRecorder.AudioSource.CAMCORDER
-                val r = AudioRecord.Builder()
-                    .setAudioSource(src)
-                    .setAudioFormat(
-                        AudioFormat.Builder().setSampleRate(RATE)
-                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
-                    )
-                    .setBufferSizeInBytes(max(min * 4, FRAME * 2 * 8))
-                    .build()
-                if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); continue }
-                if (dev != null) r.setPreferredDevice(dev)
-                records.add(r)
-            } catch (e: Exception) {
-                Log.w(TAG, "mic", e)
-            }
+            val r = MicOpener.open(dev) ?: continue
+            records.add(r.first)
+            factors.add(r.second)
         }
         if (records.isEmpty()) {
             onWarning?.invoke("마이크를 열 수 없어 소리 없이 녹화돼요")
@@ -237,6 +225,7 @@ class AvRecorder(private val ctx: Context) {
             if (a != null && a == b) {
                 onWarning?.invoke("이 폰은 두 마이크 동시 녹음을 막아둬서 한 마이크만 녹음돼요")
                 val extra = records.removeAt(1)
+                if (factors.size > 1) factors.removeAt(1)
                 try { extra.stop() } catch (e: Exception) {}
                 extra.release()
             }
@@ -305,20 +294,25 @@ class AvRecorder(private val ctx: Context) {
 
     private var audioIdle = 0
 
-    /** 마이크들을 읽어서 섞기. 하나면 그대로. */
+    private var raws: Array<ShortArray> = emptyArray()
+
+    /** 마이크들을 읽어서 (블루투스는 48kHz로 늘려서) 섞기. 하나면 그대로. */
     private fun readMixed(bufs: List<ShortArray>, out: ShortArray): Int {
         if (records.isEmpty()) return 0
+        if (raws.size != records.size) raws = Array(records.size) { ShortArray(FRAME) }
         var n = FRAME
         val counts = IntArray(records.size)
         for ((i, r) in records.withIndex()) {
-            counts[i] = try { r.read(bufs[i], 0, FRAME) } catch (e: Exception) { 0 }
+            val k = factors.getOrElse(i) { 1 }
+            val c = try { r.read(raws[i], 0, FRAME / k) } catch (e: Exception) { 0 }
+            counts[i] = if (c > 0) MicOpener.upsample(raws[i], c, k, bufs[i]) else 0
             if (counts[i] > 0) n = min(n, counts[i])
         }
         val valid = records.indices.filter { counts[it] > 0 }
         if (valid.isEmpty()) return 0
+        val g = gain
         if (valid.size == 1) {
             val src = bufs[valid[0]]
-            val g = gain
             for (j in 0 until counts[valid[0]]) {
                 out[j] = (src[j] * g).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
             }
@@ -327,7 +321,7 @@ class AvRecorder(private val ctx: Context) {
         for (j in 0 until n) {
             var s = 0
             for (i in valid) s += bufs[i][j]
-            s = (s * 0.75f * gain).toInt()
+            s = (s * 0.75f * g).toInt()
             out[j] = s.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
         }
         return n
@@ -383,6 +377,6 @@ class AvRecorder(private val ctx: Context) {
     companion object {
         private const val TAG = "AvRecorder"
         private const val RATE = 48000
-        private const val FRAME = 1024
+        private const val FRAME = 960 // 20ms, 3으로 나눠떨어짐
     }
 }
