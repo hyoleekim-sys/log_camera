@@ -694,6 +694,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         thumb = findViewById(R.id.thumb)
         shutter = findViewById(R.id.shutter)
         btnCamera = findViewById(R.id.btnCamera)
+        // 전면/후면 버튼은 없앰 (화면을 위아래로 쓸어서 전환)
+        btnCamera.visibility = View.GONE
     }
 
     private fun setupControls() {
