@@ -92,6 +92,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var recorder: AvRecorder
     private lateinit var audioManager: android.media.AudioManager
     private lateinit var btnMic: TextView
+    private lateinit var evLabel: TextView
+    /** 밝기 보정: 0.3EV 단위 칸 수 */
+    private var evSteps = 0
     private lateinit var recBorder: View
     /** 0 = 폰 마이크, 1 = 블루투스, 2 = 둘 다 */
     private var micMode = 0
@@ -612,6 +615,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnAspect = findViewById(R.id.btnAspect)
         flashSlider = findViewById(R.id.flashSlider)
         btnMic = findViewById(R.id.btnMic)
+        evLabel = findViewById(R.id.evLabel)
+        findViewById<View>(R.id.btnEvUp).setOnClickListener { changeEv(+1) }
+        findViewById<View>(R.id.btnEvDown).setOnClickListener { changeEv(-1) }
+        findViewById<View>(R.id.evLabel).setOnClickListener { changeEv(-evSteps) }
         recBorder = findViewById(R.id.recBorder)
         btnSelfie = findViewById(R.id.btnSelfie)
         btnWb = findViewById(R.id.btnWb)
@@ -836,6 +843,25 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 false
             }
         }
+    }
+
+    // ───── 밝기 보정 (0.3EV씩, 최대 ±2.1) ─────
+
+    private fun evValue() = evSteps * EV_STEP
+
+    private fun changeEv(delta: Int) {
+        val n = (evSteps + delta).coerceIn(-EV_MAX_STEPS, EV_MAX_STEPS)
+        if (n == evSteps) return
+        evSteps = n
+        engine.evComp = evValue()
+        engine.requestUpdate()
+        updateEvUi()
+    }
+
+    private fun updateEvUi() {
+        val v = evValue()
+        evLabel.text = if (evSteps == 0) "±0.0" else String.format(Locale.US, "%+.1f", v)
+        updateInfoMain()
     }
 
     // ───── 마이크 ─────
@@ -1435,6 +1461,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val locks = buildString {
             if (engine.aeLock) append("  [AE]")
             if (engine.awbLock) append("  [WB]")
+            if (evSteps != 0) append(String.format(Locale.US, "  EV%+.1f", evValue()))
         }
         infoMain.text = String.format(Locale.US, "%-8s ISO %-5d %s%s", shutterTxt, lastIso, k, locks)
     }
@@ -1494,7 +1521,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
             if (engine.manualExposureNs <= 0L || c == null || !isResumedNow) return
             val mean = renderer.meanLuma
             if (!engine.aeLock && mean > 0.01f) {
-                val err = (ln(TARGET_LUMA / mean) / ln(2f)).coerceIn(-2f, 2f)
+                // EV 보정만큼 목표 밝기 이동 (화면 감마 기준)
+                val target = (TARGET_LUMA * 2f.pow(evValue() / 2.2f)).coerceIn(0.05f, 0.9f)
+                val err = (ln(target / mean) / ln(2f)).coerceIn(-2f, 2f)
                 if (abs(err) > 0.06f) {
                     isoF = (isoF * 2f.pow(err * 0.35f)).coerceIn(c.isoMin.toFloat(), c.isoMax.toFloat())
                     val iso = isoF.roundToInt()
@@ -1544,6 +1573,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         private const val REQ_PERMS = 1
         /** 셔터 우선일 때 맞추는 평균 밝기 */
         private const val TARGET_LUMA = 0.42f
+        private const val EV_STEP = 0.3f
+        private const val EV_MAX_STEPS = 7
         /** 레버를 끝까지 밀었을 때 줌 속도 (초당 약 4.5배) */
         private const val MAX_ZOOM_SPEED = 1.5f
     }

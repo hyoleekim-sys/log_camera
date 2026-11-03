@@ -80,6 +80,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val streamSizes: List<Size> = emptyList(),
         val jpegSizes: List<Size> = emptyList(),
         val hasFlash: Boolean = false,
+        /** 노출 보정 한 칸 크기(EV)와 범위(칸 수) */
+        val evStep: Float = 0f,
+        val evMinIdx: Int = 0,
+        val evMaxIdx: Int = 0,
         /** 촬영 중 플래시 밝기 단계 수 (1이면 켬/끔만) */
         val torchMaxLevel: Int = 1,
         val torchDefaultLevel: Int = 1,
@@ -129,6 +133,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
+    /** 노출 보정 (EV). 자동 노출일 때 카메라에 전달 */
+    @Volatile var evComp = 0f
     /** 플래시(계속 켜짐) */
     /** 플래시 밝기 단계: 0 = 끔 */
     @Volatile var torchLevel = 0
@@ -224,6 +230,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     streamSizes = (map.getOutputSizes(android.graphics.SurfaceTexture::class.java) ?: previewSizes).toList(),
                     jpegSizes = jpegSizes.toList(),
                     hasFlash = c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true,
+                    evStep = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: 0f,
+                    evMinIdx = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)?.lower ?: 0,
+                    evMaxIdx = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)?.upper ?: 0,
                     torchMaxLevel = if (android.os.Build.VERSION.SDK_INT >= 35)
                         (c.get(CameraCharacteristics.FLASH_TORCH_STRENGTH_MAX_LEVEL) ?: 1).coerceAtLeast(1) else 1,
                     torchDefaultLevel = if (android.os.Build.VERSION.SDK_INT >= 35)
@@ -375,6 +384,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.SCALER_CROP_REGION, Rect(l, tp, l + w, tp + h))
         }
         b.set(CaptureRequest.CONTROL_AE_LOCK, aeLock)
+        if (c.evStep > 0f) {
+            val idx = Math.round(evComp / c.evStep).coerceIn(c.evMinIdx, c.evMaxIdx)
+            b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, idx)
+        }
         if (c.hasFlash) {
             b.set(CaptureRequest.FLASH_MODE,
                 if (torchLevel > 0) CameraMetadata.FLASH_MODE_TORCH else CameraMetadata.FLASH_MODE_OFF)

@@ -166,6 +166,31 @@
                 android:layout_width="52dp"
                 android:layout_height="220dp"
                 android:layout_marginTop="6dp" />
+
+            <!-- 밝기 (0.3EV씩) -->
+            <TextView
+                android:id="@+id/btnEvUp"
+                style="@style/Ctl"
+                android:layout_marginTop="10dp"
+                android:minWidth="52dp"
+                android:text="▲" />
+
+            <TextView
+                android:id="@+id/evLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="±0.0"
+                android:textColor="#FFFFE2C4"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/btnEvDown"
+                style="@style/Ctl"
+                android:minWidth="52dp"
+                android:text="▼" />
         </LinearLayout>
 
         <!-- 버튼: 세로는 아래, 가로는 오른쪽 -->
