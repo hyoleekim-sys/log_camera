@@ -37,6 +37,12 @@ class RearSelfie(
     private var job: Job? = null
     private var area: WindowAreaInfo? = null
     private var session: WindowAreaSessionPresenter? = null
+    private var border: View? = null
+
+    /** 녹화 중 빨간 테두리 */
+    fun setRecording(on: Boolean) {
+        border?.visibility = if (on) View.VISIBLE else View.GONE
+    }
 
     /** 지금 바깥 화면을 쓸 수 있는지 (펼친 상태 등) */
     var available = false
@@ -134,6 +140,11 @@ class RearSelfie(
             }
         })
         root.addView(sv, FrameLayout.LayoutParams(-1, -1))
+        val b = View(ctx)
+        b.setBackgroundResource(R.drawable.rec_border)
+        b.visibility = View.GONE
+        root.addView(b, FrameLayout.LayoutParams(-1, -1))
+        border = b
         val shutter = View(ctx)
         shutter.setBackgroundResource(R.drawable.shutter_photo)
         shutter.setOnClickListener {

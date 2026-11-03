@@ -296,7 +296,7 @@ class GlRenderer {
                 makeCurrent(encoder)
                 GLES30.glViewport(0, 0, outW, outH)
                 draw(if (transformRotates) identity else legacyEncoderMvp())
-                EGLExt.eglPresentationTimeANDROID(display, encoder, surfaceTexture.timestamp)
+                EGLExt.eglPresentationTimeANDROID(display, encoder, toMonotonic(surfaceTexture.timestamp))
                 EGL14.eglSwapBuffers(display, encoder)
             }
         } catch (e: Exception) {
@@ -305,6 +305,16 @@ class GlRenderer {
     }
 
     private fun legacyEncoderMvp(): FloatArray = identity
+
+    /**
+     * 카메라 시간값은 '부팅 후 경과(잠든 시간 포함)' 시계일 수 있음.
+     * 소리와 같은 System.nanoTime 시계로 바꿔야 길이·싱크가 맞음.
+     */
+    private fun toMonotonic(ts: Long): Long {
+        val now = System.nanoTime()
+        val boot = android.os.SystemClock.elapsedRealtimeNanos()
+        return if (abs(ts - boot) < abs(ts - now)) ts - (boot - now) else ts
+    }
 
     /** 보정 없이 작게 그려서 평균 밝기 계산 (가운데를 두 배 가중). */
     private fun measure() {

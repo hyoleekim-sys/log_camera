@@ -13,6 +13,13 @@
         android:layout_gravity="center" />
 
     <View
+        android:id="@+id/recBorder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/rec_border"
+        android:visibility="gone" />
+
+    <View
         android:id="@+id/flash"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -191,6 +198,7 @@
                 <TextView android:id="@+id/btnAspect" style="@style/Ctl" android:text="16:9" />
                 <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="1080p" />
                 <TextView android:id="@+id/btnFps" style="@style/Ctl" android:text="30fps" />
+                <TextView android:id="@+id/btnMic" style="@style/Ctl" android:text="마이크 폰" />
                 <TextView android:id="@+id/btnWb" style="@style/Ctl" android:text="AWB" />
                 <TextView android:id="@+id/btnGrade" style="@style/Ctl" android:text="보정" />
                 <TextView android:id="@+id/btnSelfie" style="@style/Ctl" android:text="셀피" android:visibility="gone" />
