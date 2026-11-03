@@ -253,6 +253,9 @@ class FlashSlider(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         set(v) { field = v; alpha = if (v) 1f else 0.35f; invalidate() }
     var onChange: ((Int) -> Unit)? = null
     var onBlocked: (() -> Unit)? = null
+    /** 슬라이더 이름 (플래시 / 화면조명) */
+    var title = "플래시"
+        set(v) { field = v; invalidate() }
 
     private val d = resources.displayMetrics.density
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99000000.toInt() }
@@ -280,9 +283,9 @@ class FlashSlider(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         val kx = rect.left + r + (rect.width() - 2 * r) * frac
         canvas.drawCircle(kx, height / 2f, r - 4f * d, knob)
         val label = when {
-            level == 0 -> "플래시 끔"
-            levels > 1 -> "플래시 $level/$levels"
-            else -> "플래시 켬"
+            level == 0 -> "$title 끔"
+            levels > 1 -> "$title $level/$levels"
+            else -> "$title 켬"
         }
         val ty = height / 2f - (text.descent() + text.ascent()) / 2f
         canvas.drawText(label, width / 2f, ty, text)
@@ -311,5 +314,59 @@ class FlashSlider(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
         }
         return super.onTouchEvent(e)
+    }
+}
+
+
+/** 마이크 음량 막대: 초록 → 노랑(-12dB) → 빨강(-3dB), 최고점 표시 */
+class LevelMeter(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    private var rms = -90f
+    private var peak = -90f
+    private val d = resources.displayMetrics.density
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88000000.toInt() }
+    private val green = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF7CE38B.toInt() }
+    private val yellow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFD25A.toInt() }
+    private val red = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF5A4A.toInt() }
+    private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt(); strokeWidth = 2f * d }
+
+    fun set(rmsDb: Float, peakDb: Float) { rms = rmsDb; peak = peakDb; invalidate() }
+
+    private fun x(db: Float): Float = ((db + 60f) / 60f).coerceIn(0f, 1f) * width
+
+    override fun onDraw(canvas: Canvas) {
+        val r = height / 2f
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bg)
+        val xr = x(rms)
+        val y12 = x(-12f)
+        val y3 = x(-3f)
+        canvas.drawRect(0f, 0f, minOf(xr, y12), height.toFloat(), green)
+        if (xr > y12) canvas.drawRect(y12, 0f, minOf(xr, y3), height.toFloat(), yellow)
+        if (xr > y3) canvas.drawRect(y3, 0f, xr, height.toFloat(), red)
+        val xp = x(peak)
+        if (peak > -60f) canvas.drawLine(xp, 0f, xp, height.toFloat(), tick)
+    }
+}
+
+/**
+ * 셀피용 화면 조명: 흰 띠/테두리.
+ * left/top/right/bottom 두께(px)만큼 가장자리를 흰색으로 칠함.
+ */
+class ScreenLight(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    private val white = Paint().apply { color = 0xFFFFFFFF.toInt() }
+    var l = 0; var t = 0; var r = 0; var b = 0
+
+    fun setInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        l = left; t = top; r = right; b = bottom
+        visibility = if (l + t + r + b > 0) VISIBLE else GONE
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (t > 0) canvas.drawRect(0f, 0f, w, t.toFloat(), white)
+        if (b > 0) canvas.drawRect(0f, h - b, w, h, white)
+        if (l > 0) canvas.drawRect(0f, 0f, l.toFloat(), h, white)
+        if (r > 0) canvas.drawRect(w - r, 0f, w, h, white)
     }
 }

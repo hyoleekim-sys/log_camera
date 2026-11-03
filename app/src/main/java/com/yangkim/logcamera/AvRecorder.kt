@@ -29,6 +29,8 @@ import kotlin.math.min
  */
 class AvRecorder(private val ctx: Context) {
     var onWarning: ((String) -> Unit)? = null
+    /** 녹음되는 소리(섞인 뒤)를 받아 볼 곳 — 모니터용 */
+    @Volatile var onPcm: ((ShortArray, Int) -> Unit)? = null
 
     @Volatile var isRecording = false
         private set
@@ -242,6 +244,7 @@ class AvRecorder(private val ctx: Context) {
         while (true) {
             if (!eos) {
                 val n = readMixed(bufs, mix)
+                if (n > 0) onPcm?.invoke(mix, n)
                 if (n > 0) {
                     if (firstUs < 0) {
                         // 읽은 순간에서 버퍼 길이만큼 앞이 실제 소리 시작

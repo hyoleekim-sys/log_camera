@@ -93,6 +93,19 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var audioManager: android.media.AudioManager
     private lateinit var btnMic: TextView
     private lateinit var evLabel: TextView
+    private lateinit var monitor: AudioMonitor
+    private lateinit var btnMonitor: TextView
+    private lateinit var levelMeter: LevelMeter
+    private lateinit var volumeRow: View
+    private lateinit var volLabel: TextView
+    private var monitorVol = 5
+    private lateinit var screenLight: ScreenLight
+    /** 전면 셀피 화면 조명 단계 0~5 */
+    private var lightLevel = 0
+    private var lightL = 0
+    private var lightT = 0
+    private var lightR = 0
+    private var lightB = 0
     /** 밝기 보정: 0.3EV 단위 칸 수 */
     private var evSteps = 0
     private lateinit var recBorder: View
@@ -195,7 +208,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         root.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
             if (r - l != oldR - oldL || b - t != oldB - oldT) {
                 root.post {
-                    layoutPreview()
+                    if (lightLevel > 0) setLight(lightLevel) else layoutPreview()
                     applyUiOrientation(animate = false)
                 }
             }
@@ -236,6 +249,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         initCameras()
         maybeStart()
         if (cam != null) updateShutterPriority()
+        updateMonitorUi()
         rearSelfie.start()
         applyMicRoute()
         main.post(histogramTick)
@@ -250,6 +264,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         orientationListener.disable()
         rearSelfie.stop()
         try { audioManager.clearCommunicationDevice() } catch (e: Exception) {}
+        if (monitor.running) { monitor.stop(); updateMonitorUi() }
+        setLight(0)
         main.removeCallbacks(histogramTick)
         main.removeCallbacks(statusTick)
         super.onPause()
@@ -330,9 +346,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val c = cam ?: return
         zoom = 1f.coerceIn(c.zoomMin, c.zoomMax)
         if (!c.hasFlash) engine.torchLevel = 0
-        flashSlider.levels = c.torchMaxLevel
-        flashSlider.setLevelSilently(engine.torchLevel.coerceAtMost(c.torchMaxLevel))
-        flashSlider.enabledFlash = c.hasFlash
+        val screenFlash = c.front && !c.hasFlash
+        if (!screenFlash && lightLevel > 0) setLight(0)
+        flashSlider.title = if (screenFlash) "화면조명" else "플래시"
+        flashSlider.levels = if (screenFlash) 5 else c.torchMaxLevel
+        flashSlider.setLevelSilently(if (screenFlash) lightLevel else engine.torchLevel.coerceAtMost(c.torchMaxLevel))
+        flashSlider.enabledFlash = c.hasFlash || screenFlash
         if (!c.supportsFps(fps)) fps = listOf(30, 24, 60).firstOrNull { c.supportsFps(it) } ?: 30
         engine.fps = fps
         engine.zoom = zoom
@@ -433,15 +452,17 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val overlay = if (open) View.GONE else View.VISIBLE
         findViewById<View>(R.id.infoBar).visibility = overlay
         histogram.visibility = overlay
+        findViewById<View>(R.id.monitorBox).visibility = overlay
         level.visibility = overlay
         layoutPreview()
     }
 
     private fun layoutPreview() {
         val c = cam ?: return
-        val w = root.width - root.paddingLeft - root.paddingRight
+        val fullW = root.width - root.paddingLeft - root.paddingRight
         val full = root.height - root.paddingTop - root.paddingBottom
-        val h = full - insetTop - insetBottom
+        val w = fullW - lightL - lightR
+        val h = full - insetTop - insetBottom - lightT - lightB
         if (w <= 0 || h <= 0) return
         val portraitContent = c.sensorOrientation % 180 != 0
         val ss = streamSize(c)
@@ -452,12 +473,14 @@ class MainActivity : Activity(), CameraEngine.Callback {
         val ph: Int
         if (w.toFloat() / h > r) { ph = h; pw = (h * r).roundToInt() } else { pw = w; ph = (w / r).roundToInt() }
         val lp = preview.layoutParams as FrameLayout.LayoutParams
-        val top = insetTop + (h - ph) / 2
-        if (lp.width != pw || lp.height != ph || lp.topMargin != top) {
+        val top = insetTop + lightT + (h - ph) / 2
+        val left = lightL + (w - pw) / 2
+        if (lp.width != pw || lp.height != ph || lp.topMargin != top || lp.leftMargin != left) {
             lp.width = pw
             lp.height = ph
-            lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            lp.gravity = Gravity.TOP or Gravity.START
             lp.topMargin = top
+            lp.leftMargin = left
             preview.layoutParams = lp
         }
     }
@@ -616,6 +639,15 @@ class MainActivity : Activity(), CameraEngine.Callback {
         flashSlider = findViewById(R.id.flashSlider)
         btnMic = findViewById(R.id.btnMic)
         evLabel = findViewById(R.id.evLabel)
+        btnMonitor = findViewById(R.id.btnMonitor)
+        levelMeter = findViewById(R.id.levelMeter)
+        volumeRow = findViewById(R.id.volumeRow)
+        volLabel = findViewById(R.id.volLabel)
+        screenLight = findViewById(R.id.screenLight)
+        monitor = AudioMonitor { rms, peak -> main.post { levelMeter.set(rms, peak) } }
+        btnMonitor.setOnClickListener { toggleMonitor() }
+        findViewById<View>(R.id.btnVolDown).setOnClickListener { changeMonitorVol(-1) }
+        findViewById<View>(R.id.btnVolUp).setOnClickListener { changeMonitorVol(+1) }
         findViewById<View>(R.id.btnEvUp).setOnClickListener { changeEv(+1) }
         findViewById<View>(R.id.btnEvDown).setOnClickListener { changeEv(-1) }
         findViewById<View>(R.id.evLabel).setOnClickListener { changeEv(-evSteps) }
@@ -688,7 +720,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
         flashSlider.onBlocked = { toast("이 카메라에는 플래시가 없어요") }
         var dimNoticeShown = false
-        flashSlider.onChange = { lv ->
+        flashSlider.onChange = fun(lv: Int) {
+            val cc = cam
+            if (cc != null && cc.front && !cc.hasFlash) {
+                setLight(lv)
+                return
+            }
             engine.torchLevel = lv
             engine.requestUpdate()
             val c = cam
@@ -864,6 +901,82 @@ class MainActivity : Activity(), CameraEngine.Callback {
         updateInfoMain()
     }
 
+    // ───── 소리 모니터 ─────
+
+    private fun headphonesConnected(): Boolean {
+        val types = setOf(
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+        )
+        return audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).any { it.type in types }
+    }
+
+    private fun toggleMonitor() {
+        if (monitor.running) {
+            monitor.stop()
+        } else {
+            if (!headphonesConnected()) {
+                toast("이어폰(유선·무선)을 연결해야 들을 수 있어요")
+                return
+            }
+            if (!has(Manifest.permission.RECORD_AUDIO)) {
+                toast("마이크 권한이 필요해요")
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_PERMS)
+                return
+            }
+            monitor.gain = monitorVol / 5f
+            monitor.setExternal(recorder.isRecording, null)
+            monitor.start(micsForRecording().firstOrNull())
+        }
+        updateMonitorUi()
+    }
+
+    private fun changeMonitorVol(d: Int) {
+        monitorVol = (monitorVol + d).coerceIn(0, 10)
+        monitor.gain = monitorVol / 5f
+        volLabel.text = "음량 $monitorVol"
+    }
+
+    private fun updateMonitorUi() {
+        val on = monitor.running
+        btnMonitor.setBackgroundResource(if (on) R.drawable.chip_selected_bg else R.drawable.chip_bg)
+        btnMonitor.alpha = if (on || headphonesConnected()) 1f else 0.4f
+        levelMeter.visibility = if (on) View.VISIBLE else View.GONE
+        volumeRow.visibility = if (on) View.VISIBLE else View.GONE
+        volLabel.text = "음량 $monitorVol"
+    }
+
+    // ───── 전면 셀피 화면 조명 (5단계) ─────
+
+    private fun setLight(level: Int) {
+        lightLevel = level.coerceIn(0, 5)
+        val w = root.width - root.paddingLeft - root.paddingRight
+        val h = root.height - root.paddingTop - root.paddingBottom
+        lightL = 0; lightT = 0; lightR = 0; lightB = 0
+        if (lightLevel > 0 && w > 0 && h > 0) {
+            val unfolded = w.toFloat() / h > 0.75f && h.toFloat() / w > 0.75f
+            if (unfolded) {
+                // 펼침: 양쪽 끝에서 가운데로 흰 띠 (5단계면 거의 가운데까지)
+                val side = (w * 0.42f * lightLevel / 5f).roundToInt()
+                lightL = side; lightR = side
+            } else {
+                // 접힘: 사방 테두리가 가장자리부터 두꺼워짐
+                val t = (minOf(w, h) * 0.30f * lightLevel / 5f).roundToInt()
+                lightL = t; lightR = t; lightT = t; lightB = t
+            }
+        }
+        screenLight.setInsets(lightL, lightT, lightR, lightB)
+        // 조명이 켜지면 화면을 가장 밝게
+        val lp = window.attributes
+        lp.screenBrightness = if (lightLevel > 0) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+        layoutPreview()
+    }
+
     // ───── 마이크 ─────
 
     private fun isBt(d: android.media.AudioDeviceInfo) =
@@ -903,6 +1016,12 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private fun onMicDevicesChanged() {
         if (!recorder.isRecording) applyMicRoute()
+        // 이어폰이 빠지면 모니터 끔 (스피커로 소리가 되울리지 않게)
+        if (monitor.running && !headphonesConnected()) {
+            monitor.stop()
+            toast("이어폰이 빠져서 모니터를 껐어요")
+        }
+        updateMonitorUi()
         updateButtons()
     }
 
@@ -1123,6 +1242,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 val (w, h) = renderer.outputSize()
                 val mics = micsForRecording()
                 if (!has(Manifest.permission.RECORD_AUDIO)) toast("마이크 권한이 없어 소리 없이 녹화돼요")
+                monitor.setExternal(true, null)
+                recorder.onPcm = { b, n -> monitor.feed(b, n) }
                 val surface = recorder.start(w, h, fps, bitrate(), videoRotation(c), mics)
                 renderer.setEncoderSurface(surface)
                 recordStart = SystemClock.elapsedRealtime()
@@ -1138,6 +1259,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         if (!recorder.isRecording) return
         renderer.setEncoderSurface(null)
         val uri = recorder.stop()
+        recorder.onPcm = null
+        monitor.setExternal(false, micsForRecording().firstOrNull())
         updateButtons()
         if (uri != null) {
             lastUri = uri
