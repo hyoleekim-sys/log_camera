@@ -220,13 +220,13 @@ class MainActivity : Activity(), CameraEngine.Callback {
             onShutter = { runOnUiThread { onShutter() } },
             onMessage = { m -> runOnUiThread { toast(m) } })
         // 후면 셀피: 끔 → 듀얼(바깥은 미리보기) → 셀피(바깥에서 전부 조작) → 끔
+        // 끔 → 듀얼(바깥은 미리보기·셔터, 조작은 안쪽) → 셀피(안쪽은 꺼지고 바깥에서 전부 조작) → 끔
         btnSelfie.setOnClickListener {
             try {
-                if (!rearSelfie.active) {
-                    rearSelfie.fullControl = true
-                    openSelfie()
-                } else {
-                    rearSelfie.close()
+                when {
+                    !rearSelfie.active -> { rearSelfie.fullControl = false; openSelfie() }
+                    !rearSelfie.fullControl -> rearSelfie.fullControl = true
+                    else -> rearSelfie.close()
                 }
                 syncSelfieUi()
             } catch (e: Throwable) {
@@ -461,9 +461,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
         // 미리보기를 가리는 정보 표시는 보정 중엔 숨김
         val overlay = if (open) View.GONE else View.VISIBLE
-        findViewById<View>(R.id.infoBar).visibility = overlay
+        uiRoot.findViewById<View>(R.id.infoBar).visibility = overlay
         histogram.visibility = overlay
-        findViewById<View>(R.id.monitorBox).visibility = overlay
+        uiRoot.findViewById<View>(R.id.monitorBox).visibility = overlay
         level.visibility = overlay
         layoutPreview()
     }
@@ -751,7 +751,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
             if (!videoMode || recorder.isRecording) return@setOnClickListener
             if (btMic() == null) {
                 micMode = 0
-                toast("유선·블루투스 마이크가 연결돼 있지 않아 폰 마이크로 녹음해요")
+                toast("유선·블루투스 마이크를 연결하면 쓸 수 있어요 (지금은 폰 마이크)")
+                return@setOnClickListener
             } else {
                 micMode = (micMode + 1) % 3
                 toast(when (micMode) {
@@ -1064,6 +1065,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     }
 
     private fun onMicDevicesChanged() {
+        // 외부 마이크가 빠지면 기본(폰 마이크)으로
+        if (btMic() == null && !recorder.isRecording) micMode = 0
         if (!recorder.isRecording) applyMicRoute()
         // 이어폰이 빠지면 모니터 끔 (스피커로 소리가 되울리지 않게)
         if (monitor.running && !headphonesConnected()) {
@@ -1096,8 +1099,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     /** 셀피 모드면 조작판(uiRoot)을 바깥 화면으로 옮기고, 아니면 안쪽으로 되돌림 */
     private fun syncSelfieUi() {
         val host = rearSelfie.container
-        val wantCover = rearSelfie.active && host != null
-        innerBlocker.visibility = if (rearSelfie.active) View.VISIBLE else View.GONE
+        val wantCover = rearSelfie.active && rearSelfie.fullControl && host != null
+        innerBlocker.visibility = if (wantCover) View.VISIBLE else View.GONE
         if (wantCover && !uiInCover) {
             (uiRoot.parent as? android.view.ViewGroup)?.removeView(uiRoot)
             uiRoot.rotation = 0f
@@ -1145,7 +1148,11 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnRes.text = if (res4k && c?.size4k != null) "4K" else "1080p"
         btnAspect.text = if (aspect43) "4:3" else "16:9"
         btnSelfie.visibility = if (rearSelfie.available || rearSelfie.active) View.VISIBLE else View.GONE
-        btnSelfie.text = if (rearSelfie.active) "셀피 끝" else "셀피"
+        btnSelfie.text = when {
+            !rearSelfie.active -> "셀피 끔"
+            rearSelfie.fullControl -> "셀피"
+            else -> "듀얼"
+        }
         btnSelfie.setBackgroundResource(if (rearSelfie.active) R.drawable.chip_selected_bg else R.drawable.chip_bg)
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
 
@@ -1168,9 +1175,9 @@ class MainActivity : Activity(), CameraEngine.Callback {
         recBorder.visibility = if (recorder.isRecording) View.VISIBLE else View.GONE
         rearSelfie.setRecording(recorder.isRecording)
         btnMic.text = when (effectiveMicMode()) { 1 -> "외부 마이크"; 2 -> "폰+외부"; else -> "폰 마이크" }
-        btnMic.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
+        btnMic.alpha = if (videoMode && !recorder.isRecording && btMic() != null) 1f else 0.35f
         val lock = if (recorder.isRecording) 0.35f else 1f
-        findViewById<View>(R.id.modeToggle).alpha = lock
+        uiRoot.findViewById<View>(R.id.modeToggle)?.alpha = lock
         btnCamera.alpha = if (c != null && entries.size < 2) 0.35f else 1f
         if (videoMode) btnFps.alpha = lock
         updateInfoSub()
@@ -1476,7 +1483,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
         val tabs = listOf(R.id.tabMaster, R.id.tabR, R.id.tabG, R.id.tabB)
         for ((k, id) in tabs.withIndex()) {
-            findViewById<View>(id).setBackgroundResource(if (k == i) R.drawable.chip_selected_bg else R.drawable.chip_bg)
+            uiRoot.findViewById<View>(id)?.setBackgroundResource(if (k == i) R.drawable.chip_selected_bg else R.drawable.chip_bg)
         }
     }
 

@@ -11,8 +11,8 @@ android {
         applicationId = "com.yangkim.logcamera"
         minSdk = 31
         targetSdk = 35
-        versionCode = 28
-        versionName = "2.8"
+        versionCode = 29
+        versionName = "2.9"
     }
 
     // 빌드마다 같은 키로 서명해야 폰에서 덮어쓰기 업데이트가 됩니다.
