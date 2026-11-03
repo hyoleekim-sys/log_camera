@@ -91,6 +91,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val manualSensor: Boolean = false,
         /** 색 보정값을 직접 정할 수 있는지 (화이트밸런스 숫자 고정) */
         val manualPost: Boolean = false,
+        /** 렌즈가 지원하는 조리개 값들 (대부분 하나) */
+        val apertures: List<Float> = emptyList(),
+        val expMinNs: Long = 100_000L,
         val isoMin: Int = 50,
         val isoMax: Int = 3200,
         val expMaxNs: Long = 100_000_000L
@@ -135,6 +138,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile var zoom = 1f
     @Volatile var aeLock = false
     @Volatile var awbLock = false
+    /** 조리개 (0 = 렌즈 기본) */
+    @Volatile var aperture = 0f
     @Volatile private var lastGains: android.hardware.camera2.params.RggbChannelVector? = null
     @Volatile private var lastTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
     @Volatile private var lockedGains: android.hardware.camera2.params.RggbChannelVector? = null
@@ -264,6 +269,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0),
                     manualSensor = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR),
                     manualPost = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING),
+                    apertures = (c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES) ?: FloatArray(0)).toList().sorted(),
+                    expMinNs = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.lower ?: 100_000L,
                     isoMin = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.lower ?: 50,
                     isoMax = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200,
                     expMaxNs = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper ?: 100_000_000L,
@@ -405,6 +412,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.SCALER_CROP_REGION, Rect(l, tp, l + w, tp + h))
         }
         b.set(CaptureRequest.CONTROL_AE_LOCK, aeLock)
+        if (aperture > 0f && c.apertures.size > 1) b.set(CaptureRequest.LENS_APERTURE, aperture)
         if (c.evStep > 0f) {
             val idx = Math.round(evComp / c.evStep).coerceIn(c.evMinIdx, c.evMaxIdx)
             b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, idx)
@@ -421,7 +429,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
             b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, min(manualExposureNs, c.expMaxNs))
             b.set(CaptureRequest.SENSOR_SENSITIVITY, manualIso.coerceIn(c.isoMin, c.isoMax))
-            b.set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / fps.coerceAtLeast(1))
+            val fd = if (videoMode) 1_000_000_000L / fps.coerceAtLeast(1) else 33_333_333L
+            b.set(CaptureRequest.SENSOR_FRAME_DURATION, max(fd, manualExposureNs))
         }
         val lg = lockedGains
         val lt = lockedTransform

@@ -275,6 +275,35 @@
                 android:gravity="center"
                 android:orientation="horizontal" />
 
+            <!-- 사진: 조리개 / 셔터 / ISO -->
+            <LinearLayout
+                android:id="@+id/dialRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <com.yangkim.logcamera.ValueDial
+                    android:id="@+id/dialAperture"
+                    android:layout_width="84dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="3dp" />
+
+                <com.yangkim.logcamera.ValueDial
+                    android:id="@+id/dialShutter"
+                    android:layout_width="84dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="3dp" />
+
+                <com.yangkim.logcamera.ValueDial
+                    android:id="@+id/dialIso"
+                    android:layout_width="84dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="3dp" />
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/settingsRow"
                 android:layout_width="wrap_content"

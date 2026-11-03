@@ -370,3 +370,116 @@ class ScreenLight(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         if (r > 0) canvas.drawRect(w - r, 0f, w, h, white)
     }
 }
+
+
+/**
+ * 값 다이얼 (조리개 / 셔터 / ISO).
+ * - 위아래로 밀어서 값 선택 (수동일 때)
+ * - 꾹 누르면 자동 ↔ 수동
+ * - 자동이면 "A"와 함께 카메라가 고른 값을 흐리게 표시
+ */
+class ValueDial(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
+    var title = ""
+        set(v) { field = v; invalidate() }
+    var values: List<String> = emptyList()
+        set(v) { field = v; index = index.coerceIn(0, (v.size - 1).coerceAtLeast(0)); invalidate() }
+    var index = 0
+        set(v) { field = v; invalidate() }
+    var auto = true
+        set(v) { field = v; invalidate() }
+    /** 자동일 때 보여줄 지금 값 */
+    var autoText = "—"
+        set(v) { if (field != v) { field = v; invalidate() } }
+    var canManual = true
+    var onIndex: ((Int) -> Unit)? = null
+    var onAuto: ((Boolean) -> Unit)? = null
+    var onBlocked: ((String) -> Unit)? = null
+
+    private val d = resources.displayMetrics.density
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99000000.toInt() }
+    private val bgManual = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC8A5A2B.toInt() }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x55FFFFFF; style = Paint.Style.STROKE; strokeWidth = 1f * d
+    }
+    private val titleP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xAAFFFFFF.toInt(); textSize = 10f * d; textAlign = Paint.Align.CENTER
+    }
+    private val valueP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt(); textSize = 15f * d; textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+    private val arrowP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x66FFFFFF; textSize = 9f * d; textAlign = Paint.Align.CENTER
+    }
+
+    private var downY = 0f
+    private var downIndex = 0
+    private var moved = false
+    private var longFired = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val longPress = Runnable {
+        longFired = true
+        if (!canManual) {
+            onBlocked?.invoke(title)
+            return@Runnable
+        }
+        auto = !auto
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        onAuto?.invoke(auto)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val r = 12f * d
+        val rect = RectF(1f * d, 1f * d, width - 1f * d, height - 1f * d)
+        canvas.drawRoundRect(rect, r, r, if (auto) bg else bgManual)
+        canvas.drawRoundRect(rect, r, r, stroke)
+        canvas.drawText(if (auto) "$title · A" else "$title · M", width / 2f, 13f * d, titleP)
+        val v = if (auto) autoText else values.getOrElse(index) { "—" }
+        valueP.alpha = if (auto) 170 else 255
+        val cy = height / 2f + 6f * d - (valueP.descent() + valueP.ascent()) / 2f
+        canvas.drawText(v, width / 2f, cy, valueP)
+        if (!auto && values.size > 1) {
+            canvas.drawText("▲", width - 9f * d, height / 2f, arrowP)
+            canvas.drawText("▼", width - 9f * d, height / 2f + 11f * d, arrowP)
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                downY = e.y
+                downIndex = index
+                moved = false
+                longFired = false
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                handler.postDelayed(longPress, 550)
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dy = downY - e.y
+                if (!moved && kotlin.math.abs(dy) > 8f * d) {
+                    moved = true
+                    handler.removeCallbacks(longPress)
+                }
+                if (moved && !longFired) {
+                    if (auto) return true
+                    val step = 18f * d
+                    val ni = (downIndex + (dy / step).toInt()).coerceIn(0, (values.size - 1).coerceAtLeast(0))
+                    if (ni != index) {
+                        index = ni
+                        performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+                        onIndex?.invoke(index)
+                    }
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPress)
+                if (moved && auto && !longFired) onBlocked?.invoke("auto")
+                return true
+            }
+        }
+        return super.onTouchEvent(e)
+    }
+}

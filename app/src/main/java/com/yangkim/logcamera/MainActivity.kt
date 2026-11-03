@@ -93,6 +93,16 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var audioManager: android.media.AudioManager
     private lateinit var btnMic: TextView
     private lateinit var evLabel: TextView
+    private lateinit var dialRow: LinearLayout
+    private lateinit var dialAperture: ValueDial
+    private lateinit var dialShutter: ValueDial
+    private lateinit var dialIso: ValueDial
+    /** 사진 수동 설정: 셔터(ns)·ISO 후보와 선택 */
+    private var shutterChoices: List<Long> = emptyList()
+    private var isoChoices: List<Int> = emptyList()
+    private var shutterManual = false
+    private var isoManual = false
+    private var expF = 16_666_667f
     private lateinit var monitor: AudioMonitor
     private lateinit var btnMonitor: TextView
     private lateinit var levelMeter: LevelMeter
@@ -356,6 +366,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         camIndex = i
         val c = cam ?: return
         zoom = 1f.coerceIn(c.zoomMin, c.zoomMax)
+        buildDialChoices(c)
         if (!c.hasFlash) engine.torchLevel = 0
         val screenFlash = c.front && !c.hasFlash
         if (!screenFlash && lightLevel > 0) setLight(0)
@@ -567,7 +578,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             }
             topControls.visibility = View.VISIBLE
         } else {
-            controlBar.addView(settingsRow, 1, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
+            controlBar.addView(settingsRow, controlBar.indexOfChild(dialRow) + 1, LinearLayout.LayoutParams(wrap, wrap).apply { gravity = Gravity.CENTER })
             shutterRow.addView(btnCamera, LinearLayout.LayoutParams(dp(64), dp(52)).apply { setMargins(dp(10), dp(10), dp(10), dp(10)) })
             for (v in small) {
                 v.textSize = 14f
@@ -578,7 +589,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             topControls.visibility = View.GONE
         }
         controlBar.orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        for (row in listOf(focalRow, settingsRow, shutterRow)) {
+        for (row in listOf(focalRow, dialRow, settingsRow, shutterRow)) {
             row.orientation = if (land && row !== settingsRow) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         }
         val cl = controlBar.layoutParams as FrameLayout.LayoutParams
@@ -657,6 +668,11 @@ class MainActivity : Activity(), CameraEngine.Callback {
         flashSlider = findViewById(R.id.flashSlider)
         btnMic = findViewById(R.id.btnMic)
         evLabel = findViewById(R.id.evLabel)
+        dialRow = findViewById(R.id.dialRow)
+        dialAperture = findViewById(R.id.dialAperture)
+        dialShutter = findViewById(R.id.dialShutter)
+        dialIso = findViewById(R.id.dialIso)
+        setupDials()
         btnMonitor = findViewById(R.id.btnMonitor)
         levelMeter = findViewById(R.id.levelMeter)
         volumeRow = findViewById(R.id.volumeRow)
@@ -1671,7 +1687,13 @@ class MainActivity : Activity(), CameraEngine.Callback {
         lastExp = exposureNs
         lastIso = iso
         lastK = kelvin
-        runOnUiThread { updateInfoMain() }
+        runOnUiThread {
+            updateInfoMain()
+            if (exposureNs > 0) dialShutter.autoText = fmtShutter(exposureNs)
+            if (iso > 0) dialIso.autoText = "$iso"
+            if (!videoMode && shutterManual && !isoManual) dialIso.autoText = "${engine.manualIso}"
+            if (!videoMode && isoManual && !shutterManual) dialShutter.autoText = fmtShutter(engine.manualExposureNs)
+        }
     }
 
     override fun onCameraError(message: String) {
@@ -1725,6 +1747,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private fun updateShutterPriority() {
         val c = cam
+        dialRow.visibility = if (videoMode) View.GONE else View.VISIBLE
+        if (!videoMode) { updatePhotoExposure(); return }
         val on = videoMode && c != null && c.manualSensor
         val ns = if (on) shutterNsFor(fps) else 0L
         if (ns > 0 && engine.manualExposureNs == 0L) {
@@ -1741,6 +1765,104 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     private var isoF = 400f
 
+    // ───── 사진: 조리개 / 셔터 / ISO 다이얼 ─────
+
+    private fun fmtShutter(ns: Long): String =
+        if (ns >= 300_000_000L) String.format(Locale.US, "%.1f\"", ns / 1e9) else "1/" + (1e9 / ns).roundToInt()
+
+    private fun setupDials() {
+        dialAperture.title = "조리개"
+        dialShutter.title = "셔터"
+        dialIso.title = "ISO"
+        val blocked: (String) -> Unit = { what ->
+            when (what) {
+                "auto" -> toast("꾹 누르면 수동으로 바뀌어요")
+                "조리개" -> toast("이 렌즈는 조리개가 하나로 고정이에요")
+                else -> toast("이 카메라는 수동 노출을 막아뒀어요")
+            }
+        }
+        dialAperture.onBlocked = blocked
+        dialShutter.onBlocked = blocked
+        dialIso.onBlocked = blocked
+        dialAperture.onAuto = { a ->
+            engine.aperture = if (a) 0f else (cam?.apertures?.getOrNull(dialAperture.index) ?: 0f)
+            engine.requestUpdate()
+        }
+        dialAperture.onIndex = { i -> engine.aperture = cam?.apertures?.getOrNull(i) ?: 0f; engine.requestUpdate() }
+        dialShutter.onAuto = { a ->
+            shutterManual = !a
+            if (!a) dialShutter.index = nearestShutter(lastExp)
+            updatePhotoExposure()
+        }
+        dialShutter.onIndex = { updatePhotoExposure() }
+        dialIso.onAuto = { a ->
+            isoManual = !a
+            if (!a) dialIso.index = nearestIso(lastIso)
+            updatePhotoExposure()
+        }
+        dialIso.onIndex = { updatePhotoExposure() }
+    }
+
+    private fun nearestShutter(ns: Long): Int {
+        if (shutterChoices.isEmpty() || ns <= 0) return (shutterChoices.size / 2)
+        return shutterChoices.indices.minByOrNull { abs(ln(shutterChoices[it].toFloat() / ns)) } ?: 0
+    }
+
+    private fun nearestIso(iso: Int): Int {
+        if (isoChoices.isEmpty() || iso <= 0) return 0
+        return isoChoices.indices.minByOrNull { abs(ln(isoChoices[it].toFloat() / iso)) } ?: 0
+    }
+
+    /** 카메라가 바뀔 때 다이얼 값 목록 다시 만들기 */
+    private fun buildDialChoices(c: CameraEngine.Cam) {
+        val ap = c.apertures
+        dialAperture.values = if (ap.isEmpty()) listOf("—") else ap.map { String.format(Locale.US, "f/%.1f", it) }
+        dialAperture.canManual = ap.size > 1
+        dialAperture.auto = true
+        dialAperture.autoText = dialAperture.values.firstOrNull() ?: "—"
+        engine.aperture = 0f
+        // 셔터: 빠른 것 → 느린 것 (위로 밀면 느려짐 = 밝아짐)
+        val denoms = listOf(8000, 6400, 5000, 4000, 3200, 2500, 2000, 1600, 1250, 1000, 800, 640, 500, 400,
+            320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4)
+        val maxNs = minOf(c.expMaxNs, 250_000_000L)
+        shutterChoices = denoms.map { 1_000_000_000L / it }.filter { it in c.expMinNs..maxNs }
+        dialShutter.values = shutterChoices.map { fmtShutter(it) }
+        // ISO: 낮은 것 → 높은 것
+        val isos = listOf(50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600,
+            2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800)
+        isoChoices = isos.filter { it in c.isoMin..c.isoMax }.ifEmpty { listOf(c.isoMin) }
+        dialIso.values = isoChoices.map { "$it" }
+        dialShutter.canManual = c.manualSensor && shutterChoices.isNotEmpty()
+        dialIso.canManual = c.manualSensor
+        if (!c.manualSensor) { shutterManual = false; isoManual = false }
+        dialShutter.auto = !shutterManual
+        dialIso.auto = !isoManual
+        dialShutter.index = dialShutter.index.coerceIn(0, (shutterChoices.size - 1).coerceAtLeast(0))
+        dialIso.index = dialIso.index.coerceIn(0, (isoChoices.size - 1).coerceAtLeast(0))
+    }
+
+    /** 사진 모드 노출: 둘 다 자동이면 카메라 자동, 하나라도 수동이면 나머지를 앱이 맞춤 */
+    private fun updatePhotoExposure() {
+        val c = cam ?: return
+        main.removeCallbacks(isoTick)
+        if (!c.manualSensor || (!shutterManual && !isoManual)) {
+            engine.manualExposureNs = 0L
+            engine.requestUpdate()
+            return
+        }
+        val ns = if (shutterManual) shutterChoices.getOrElse(dialShutter.index) { 16_666_667L }
+            else (if (lastExp > 0) lastExp else 16_666_667L)
+        val iso = if (isoManual) isoChoices.getOrElse(dialIso.index) { 100 }
+            else (if (lastExp > 0 && lastIso > 0) (lastExp.toDouble() * lastIso / ns).toInt() else 400)
+                .coerceIn(c.isoMin, c.isoMax)
+        expF = ns.toFloat()
+        isoF = iso.toFloat()
+        engine.manualExposureNs = ns
+        engine.manualIso = iso
+        engine.requestUpdate()
+        if (!(shutterManual && isoManual)) main.postDelayed(isoTick, 200)
+    }
+
     /** 보정 전 화면 밝기를 보고 ISO를 천천히 맞춤. AE 잠금 중엔 그대로. */
     private val isoTick = object : Runnable {
         override fun run() {
@@ -1752,11 +1874,22 @@ class MainActivity : Activity(), CameraEngine.Callback {
                 val target = (TARGET_LUMA * 2f.pow(evValue() / 2.2f)).coerceIn(0.05f, 0.9f)
                 val err = (ln(target / mean) / ln(2f)).coerceIn(-2f, 2f)
                 if (abs(err) > 0.06f) {
-                    isoF = (isoF * 2f.pow(err * 0.35f)).coerceIn(c.isoMin.toFloat(), c.isoMax.toFloat())
-                    val iso = isoF.roundToInt()
-                    if (iso != engine.manualIso) {
-                        engine.manualIso = iso
+                    val photoIsoManual = !videoMode && isoManual
+                    if (!videoMode && shutterManual && isoManual) {
+                        // 둘 다 수동: 그대로
+                    } else if (photoIsoManual) {
+                        // ISO 고정 → 셔터가 따라감
+                        val maxNs = minOf(c.expMaxNs, 250_000_000L).toFloat()
+                        expF = (expF * 2f.pow(err * 0.35f)).coerceIn(c.expMinNs.toFloat(), maxNs)
+                        engine.manualExposureNs = expF.toLong()
                         engine.requestUpdate()
+                    } else {
+                        isoF = (isoF * 2f.pow(err * 0.35f)).coerceIn(c.isoMin.toFloat(), c.isoMax.toFloat())
+                        val iso = isoF.roundToInt()
+                        if (iso != engine.manualIso) {
+                            engine.manualIso = iso
+                            engine.requestUpdate()
+                        }
                     }
                 }
             }
