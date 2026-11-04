@@ -604,9 +604,14 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
         controlBar.layoutParams = cl
         val ll = leverBox.layoutParams as FrameLayout.LayoutParams
-        ll.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        // 가로: 위쪽 설정 버튼 줄과 겹치지 않게 아래쪽에 붙이고 레버를 조금 짧게
+        ll.gravity = if (land) Gravity.END or Gravity.BOTTOM else Gravity.END or Gravity.CENTER_VERTICAL
         ll.rightMargin = dp(6)
+        ll.bottomMargin = if (land) dp(10) else 0
         leverBox.layoutParams = ll
+        val zl = zoomLever.layoutParams
+        zl.height = if (land) dp(150) else dp(220)
+        zoomLever.layoutParams = zl
         if (land) {
             controlBar.post {
                 val l2 = leverBox.layoutParams as FrameLayout.LayoutParams
