@@ -1375,16 +1375,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         if (!videoMode) {
             val rot = outputRotation(c)
             if (c.front && lightLevel > 0) {
-                // 전면 화면조명: 검은 효과 없이, 찍는 순간 화면 전체를 하얗게 → 얼굴을 비춤
-                if (screenFlashBusy) return
-                screenFlashBusy = true
-                val fw = root.width
-                screenLight.setInsets(fw, 0, 0, 0)
-                main.postDelayed({ engine.takePhoto(rot) }, 250)
-                main.postDelayed({
-                    screenLight.setInsets(lightL, lightT, lightR, lightB)
-                    screenFlashBusy = false
-                }, 900)
+                // 전면 화면조명: 검은 셔터 효과 없이 그대로 찍음 (조명이 가려지지 않게)
+                engine.takePhoto(rot)
                 return
             }
             flash.alpha = 0.6f
