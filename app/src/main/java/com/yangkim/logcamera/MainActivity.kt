@@ -114,6 +114,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var screenLight: ScreenLight
     /** 전면 셀피 화면 조명 단계 0~5 */
     private var lightLevel = 0
+    private var screenFlashBusy = false
     private var lightL = 0
     private var lightT = 0
     private var lightR = 0
@@ -1372,9 +1373,23 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private fun onShutter() {
         val c = cam ?: return
         if (!videoMode) {
+            val rot = outputRotation(c)
+            if (c.front && lightLevel > 0) {
+                // 전면 화면조명: 검은 효과 없이, 찍는 순간 화면 전체를 하얗게 → 얼굴을 비춤
+                if (screenFlashBusy) return
+                screenFlashBusy = true
+                val fw = root.width
+                screenLight.setInsets(fw, 0, 0, 0)
+                main.postDelayed({ engine.takePhoto(rot) }, 250)
+                main.postDelayed({
+                    screenLight.setInsets(lightL, lightT, lightR, lightB)
+                    screenFlashBusy = false
+                }, 900)
+                return
+            }
             flash.alpha = 0.6f
             flash.animate().alpha(0f).setDuration(220).start()
-            engine.takePhoto(outputRotation(c))
+            engine.takePhoto(rot)
             return
         }
         if (recorder.isRecording) {
