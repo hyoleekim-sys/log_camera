@@ -45,12 +45,10 @@ class GalleryActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var grid: GridView
     private lateinit var viewer: FrameLayout
-    private lateinit var photoView: ImageView
+    private lateinit var pager: androidx.viewpager2.widget.ViewPager2
     private lateinit var videoView: VideoView
     private lateinit var counter: TextView
-    private lateinit var playBadge: TextView
     private var current = -1
-    private var loadToken = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,6 +107,7 @@ class GalleryActivity : Activity() {
             }
         } catch (e: Exception) {}
         (grid.adapter as BaseAdapter).notifyDataSetChanged()
+        if (::pager.isInitialized) pager.adapter?.notifyDataSetChanged()
     }
 
     // ───────── 화면 ─────────
@@ -142,19 +141,31 @@ class GalleryActivity : Activity() {
 
         // 크게 보기
         viewer = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); visibility = View.GONE; isClickable = true }
-        photoView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-        viewer.addView(photoView, FrameLayout.LayoutParams(-1, -1))
+        // 손가락 따라 넘어가는 크게 보기
+        pager = androidx.viewpager2.widget.ViewPager2(this).apply {
+            adapter = PageAdapter()
+            offscreenPageLimit = 1
+            val t = androidx.viewpager2.widget.CompositePageTransformer()
+            t.addTransformer(androidx.viewpager2.widget.MarginPageTransformer(dp(16)))
+            t.addTransformer { page, pos ->
+                // 넘어가는 장은 살짝 작아지고 흐려짐
+                val f = 1f - 0.08f * abs(pos).coerceAtMost(1f)
+                page.scaleX = f
+                page.scaleY = f
+                page.alpha = 1f - 0.35f * abs(pos).coerceAtMost(1f)
+            }
+            setPageTransformer(t)
+            registerOnPageChangeCallback(object : androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback() {
+                override fun onPageSelected(position: Int) {
+                    current = position
+                    stopVideo()
+                    updateCounter()
+                }
+            })
+        }
+        viewer.addView(pager, FrameLayout.LayoutParams(-1, -1))
         videoView = VideoView(this).apply { visibility = View.GONE }
         viewer.addView(videoView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
-        playBadge = TextView(this).apply {
-            text = "▶  눌러서 재생"
-            setTextColor(Color.WHITE); textSize = 16f
-            setBackgroundResource(R.drawable.chip_bg)
-            setPadding(dp(16), dp(10), dp(16), dp(10))
-            visibility = View.GONE
-            setOnClickListener { playCurrent() }
-        }
-        viewer.addView(playBadge, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
 
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -170,26 +181,6 @@ class GalleryActivity : Activity() {
         top.addView(chip("공유") { shareCurrent() })
         top.addView(chip("갤러리") { openExternal() })
         viewer.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
-
-        // 옆으로 넘기기
-        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent) = true
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-                val s = e1 ?: return false
-                val dx = e2.x - s.x
-                if (abs(dx) > dp(60) && abs(dx) > abs(e2.y - s.y)) {
-                    if (dx < 0) show(current + 1) else show(current - 1)
-                    return true
-                }
-                return false
-            }
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
-                if (items.getOrNull(current)?.video == true) playCurrent()
-                return true
-            }
-        })
-        photoView.setOnTouchListener { _, ev -> detector.onTouchEvent(ev) }
-        viewer.setOnTouchListener { _, ev -> detector.onTouchEvent(ev) }
 
         root.addView(viewer, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -209,51 +200,42 @@ class GalleryActivity : Activity() {
     private fun show(index: Int) {
         if (index < 0 || index >= items.size) return
         current = index
-        val it = items[index]
-        viewer.visibility = View.VISIBLE
-        stopVideo()
-        counter.text = "${index + 1} / ${items.size}" + if (it.video) "  ·  영상 ${fmtDur(it.durationMs)}" else ""
-        photoView.visibility = View.VISIBLE
-        photoView.setImageBitmap(null)
-        playBadge.visibility = if (it.video) View.VISIBLE else View.GONE
-        val token = ++loadToken
-        val w = resources.displayMetrics.widthPixels
-        val h = resources.displayMetrics.heightPixels
-        worker.execute {
-            val bmp: Bitmap? = try {
-                if (it.video) {
-                    contentResolver.loadThumbnail(it.uri, Size(w, h), null)
-                } else {
-                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, it.uri)) { dec, info, _ ->
-                        val s = info.size
-                        val scale = maxOf(1, maxOf(s.width / maxOf(w, h), s.height / maxOf(w, h)))
-                        dec.setTargetSize(s.width / scale, s.height / scale)
-                    }
-                }
-            } catch (e: Exception) { null }
-            main.post { if (token == loadToken) photoView.setImageBitmap(bmp) }
+        if (viewer.visibility != View.VISIBLE) {
+            // 목록에서 열 때: 살짝 커지며 나타남
+            viewer.visibility = View.VISIBLE
+            viewer.alpha = 0f
+            viewer.scaleX = 0.94f
+            viewer.scaleY = 0.94f
+            viewer.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220).start()
         }
+        stopVideo()
+        pager.setCurrentItem(index, false)
+        updateCounter()
+    }
+
+    private fun updateCounter() {
+        val it = items.getOrNull(current) ?: return
+        counter.text = "${current + 1} / ${items.size}" + if (it.video) "  ·  영상 ${fmtDur(it.durationMs)}" else ""
     }
 
     private fun closeViewer() {
         stopVideo()
-        viewer.visibility = View.GONE
+        viewer.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(180).withEndAction {
+            viewer.visibility = View.GONE
+            viewer.alpha = 1f; viewer.scaleX = 1f; viewer.scaleY = 1f
+        }.start()
         current = -1
     }
 
     private fun playCurrent() {
         val it = items.getOrNull(current) ?: return
         if (!it.video) return
-        playBadge.visibility = View.GONE
-        photoView.visibility = View.GONE
         videoView.visibility = View.VISIBLE
+        videoView.alpha = 0f
+        videoView.animate().alpha(1f).setDuration(200).start()
         videoView.setMediaController(MediaController(this).apply { setAnchorView(videoView) })
         videoView.setVideoURI(it.uri)
-        videoView.setOnCompletionListener {
-            videoView.visibility = View.GONE
-            photoView.visibility = View.VISIBLE
-            playBadge.visibility = View.VISIBLE
-        }
+        videoView.setOnCompletionListener { stopVideo() }
         videoView.start()
     }
 
@@ -285,6 +267,66 @@ class GalleryActivity : Activity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             })
         } catch (e: Exception) {}
+    }
+
+    // ───────── 크게 보기 한 장 ─────────
+
+    private class PageHolder(val box: FrameLayout, val img: ImageView, val badge: TextView) :
+        androidx.recyclerview.widget.RecyclerView.ViewHolder(box) {
+        var key = ""
+    }
+
+    private inner class PageAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<PageHolder>() {
+        override fun getItemCount() = items.size
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageHolder {
+            val box = FrameLayout(parent.context).apply {
+                layoutParams = ViewGroup.LayoutParams(-1, -1)
+                setBackgroundColor(Color.BLACK)
+            }
+            val img = ImageView(parent.context).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+            box.addView(img, FrameLayout.LayoutParams(-1, -1))
+            val badge = TextView(parent.context).apply {
+                text = "▶  눌러서 재생"
+                setTextColor(Color.WHITE); textSize = 16f
+                setBackgroundResource(R.drawable.chip_bg)
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                setOnClickListener { playCurrent() }
+            }
+            box.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+            return PageHolder(box, img, badge)
+        }
+
+        override fun onBindViewHolder(h: PageHolder, position: Int) {
+            val item = items[position]
+            h.badge.visibility = if (item.video) View.VISIBLE else View.GONE
+            h.box.setOnClickListener { if (item.video) playCurrent() }
+            val key = item.uri.toString()
+            h.key = key
+            h.img.setImageBitmap(null)
+            val w = resources.displayMetrics.widthPixels
+            val hh = resources.displayMetrics.heightPixels
+            worker.execute {
+                val bmp: Bitmap? = try {
+                    if (item.video) {
+                        contentResolver.loadThumbnail(item.uri, Size(w, hh), null)
+                    } else {
+                        ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, item.uri)) { dec, info, _ ->
+                            val s = info.size
+                            val scale = maxOf(1, maxOf(s.width, s.height) / maxOf(w, hh))
+                            dec.setTargetSize(s.width / scale, s.height / scale)
+                        }
+                    }
+                } catch (e: Exception) { null }
+                main.post {
+                    if (h.key == key) {
+                        h.img.setImageBitmap(bmp)
+                        h.img.alpha = 0f
+                        h.img.animate().alpha(1f).setDuration(150).start()
+                    }
+                }
+            }
+        }
     }
 
     // ───────── 썸네일 칸 ─────────
