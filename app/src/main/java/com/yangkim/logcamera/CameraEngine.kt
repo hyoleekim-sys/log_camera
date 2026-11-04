@@ -145,6 +145,39 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile private var lockedGains: android.hardware.camera2.params.RggbChannelVector? = null
     @Volatile private var lockedTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
 
+    /** 수동 색온도 (0 = 자동) */
+    @Volatile private var manualKelvin = 0
+    @Volatile private var refBase = 0f
+    @Volatile private var refGreen = 1f
+    @Volatile private var refTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
+
+    /** 수동 색온도 켜기/바꾸기. 0이면 자동으로. 수동이 가능하면 true */
+    fun setManualKelvin(k: Int): Boolean {
+        if (k <= 0) {
+            manualKelvin = 0
+            requestUpdate()
+            return false
+        }
+        if (manualKelvin == 0) {
+            // 자동이 잡아둔 값을 기준으로 삼음
+            val g = lastGains ?: lockedGains
+            val t = lastTransform ?: lockedTransform
+            if (g == null || t == null || cam?.manualPost != true) return false
+            refBase = kotlin.math.sqrt(g.red * g.blue)
+            refGreen = (g.greenEven + g.greenOdd) / 2f
+            refTransform = t
+        }
+        manualKelvin = k
+        requestUpdate()
+        return true
+    }
+
+    /** 지금 자동 화이트밸런스가 추정한 색온도 */
+    fun currentKelvin(): Int {
+        val g = lastGains ?: return 5000
+        return if (g.blue > 0f) estimateKelvin(g.red / g.blue) else 5000
+    }
+
     /** 화이트밸런스 잠금/해제. 잠글 땐 지금 색 보정값을 저장. 숫자 고정이 되면 true */
     fun setWbLock(on: Boolean): Boolean {
         if (on) {
@@ -434,7 +467,19 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         }
         val lg = lockedGains
         val lt = lockedTransform
-        if (awbLock && c.manualPost && lg != null && lt != null) {
+        val mk = manualKelvin
+        val rb = refBase
+        val rt = refTransform
+        if (mk > 0 && c.manualPost && rb > 0f && rt != null) {
+            // 수동 색온도: 켈빈 값으로 빨강/파랑 세기를 계산해서 강제
+            val ratio = 0.5f * (mk / 3000f).pow(1f / 0.66f)
+            val sq = kotlin.math.sqrt(ratio)
+            val g = android.hardware.camera2.params.RggbChannelVector(rb * sq, refGreen, refGreen, rb / sq)
+            b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+            b.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+            b.set(CaptureRequest.COLOR_CORRECTION_GAINS, g)
+            b.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, rt)
+        } else if (awbLock && c.manualPost && lg != null && lt != null) {
             // 잠글 때의 색 보정값을 그대로 강제 → 렌즈가 바뀌어도 같은 색
             b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
             b.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
@@ -472,7 +517,7 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
             val exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
-            if (!awbLock) {
+            if (!awbLock && manualKelvin == 0) {
                 lastGains = gains
                 lastTransform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
             }

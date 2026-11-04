@@ -97,6 +97,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private lateinit var dialAperture: ValueDial
     private lateinit var dialShutter: ValueDial
     private lateinit var dialIso: ValueDial
+    private lateinit var dialWb: ValueDial
+    private val kelvinChoices = (24..100 step 2).map { it * 100 }   // 2400K ~ 10000K, 200K 단위
     /** 사진 수동 설정: 셔터(ns)·ISO 후보와 선택 */
     private var shutterChoices: List<Long> = emptyList()
     private var isoChoices: List<Int> = emptyList()
@@ -677,6 +679,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
         dialAperture = findViewById(R.id.dialAperture)
         dialShutter = findViewById(R.id.dialShutter)
         dialIso = findViewById(R.id.dialIso)
+        dialWb = findViewById(R.id.dialWb)
         setupDials()
         btnMonitor = findViewById(R.id.btnMonitor)
         levelMeter = findViewById(R.id.levelMeter)
@@ -792,6 +795,15 @@ class MainActivity : Activity(), CameraEngine.Callback {
             }
             applyMicRoute()
             updateButtons()
+        }
+
+        btnWb.setOnLongClickListener {
+            if (videoMode) {
+                toast("수동 색온도는 사진 모드에서 쓸 수 있어요")
+            } else {
+                dialWb.toggleAuto()
+            }
+            true
         }
 
         btnWb.setOnClickListener {
@@ -1186,7 +1198,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         btnAspect.alpha = if (recorder.isRecording) 0.35f else 1f
 
         btnRes.alpha = if (videoMode && !recorder.isRecording) 1f else 0.35f
-        setLocked(btnWb, engine.awbLock, "AWB", "WB 잠금")
+        setLocked(btnWb, engine.awbLock || !dialWb.auto,
+            "AWB", if (!dialWb.auto) "WB ${kelvinChoices.getOrElse(dialWb.index) { 5000 }}K" else "WB 잠금")
         setLocked(btnAe, engine.aeLock, "AE-L ›", if (aeLatched) "AE 고정 ›" else "AE 잠금")
         btnGrade.text = if (currentGrade.id == Grade.NONE_ID) "보정" else "보정 ●"
         modePhoto.setBackgroundResource(if (!videoMode) R.drawable.chip_selected_bg else 0)
@@ -1698,6 +1711,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
             updateInfoMain()
             if (exposureNs > 0) dialShutter.autoText = fmtShutter(exposureNs)
             if (iso > 0) dialIso.autoText = "$iso"
+            if (kelvin > 0) dialWb.autoText = "≈${kelvin}K"
             if (!videoMode && shutterManual && !isoManual) dialIso.autoText = "${engine.manualIso}"
             if (!videoMode && isoManual && !shutterManual) dialShutter.autoText = fmtShutter(engine.manualExposureNs)
         }
@@ -1755,6 +1769,7 @@ class MainActivity : Activity(), CameraEngine.Callback {
     private fun updateShutterPriority() {
         val c = cam
         dialRow.visibility = if (videoMode) View.GONE else View.VISIBLE
+        if (videoMode && !dialWb.auto) { dialWb.auto = true; engine.setManualKelvin(0) }
         if (!videoMode) { updatePhotoExposure(); return }
         val on = videoMode && c != null && c.manualSensor
         val ns = if (on) shutterNsFor(fps) else 0L
@@ -1808,6 +1823,28 @@ class MainActivity : Activity(), CameraEngine.Callback {
             updatePhotoExposure()
         }
         dialIso.onIndex = { updatePhotoExposure() }
+
+        // 화이트밸런스(켈빈): 위로 밀면 따뜻하게(숫자 큼)
+        dialWb.title = "화밸"
+        dialWb.values = kelvinChoices.map { "${it}K" }
+        dialWb.onBlocked = { what ->
+            if (what == "auto") toast("꾹 누르면 수동으로 바뀌어요")
+            else toast("이 카메라는 색온도 직접 설정을 막아뒀어요")
+        }
+        dialWb.onAuto = { a ->
+            if (a) {
+                engine.setManualKelvin(0)
+            } else {
+                val k = engine.currentKelvin()
+                dialWb.index = kelvinChoices.indices.minByOrNull { abs(kelvinChoices[it] - k) } ?: 13
+                if (!engine.setManualKelvin(kelvinChoices[dialWb.index])) {
+                    dialWb.auto = true
+                    toast("이 카메라는 색온도 직접 설정을 막아뒀어요")
+                }
+            }
+            updateButtons()
+        }
+        dialWb.onIndex = { i -> engine.setManualKelvin(kelvinChoices[i]); updateButtons() }
     }
 
     private fun nearestShutter(ns: Long): Int {
@@ -1845,6 +1882,8 @@ class MainActivity : Activity(), CameraEngine.Callback {
         dialShutter.auto = !shutterManual
         dialIso.auto = !isoManual
         dialShutter.index = dialShutter.index.coerceIn(0, (shutterChoices.size - 1).coerceAtLeast(0))
+        dialWb.canManual = c.manualPost
+        if (!dialWb.auto) { dialWb.auto = true; engine.setManualKelvin(0) }
         dialIso.index = dialIso.index.coerceIn(0, (isoChoices.size - 1).coerceAtLeast(0))
     }
 

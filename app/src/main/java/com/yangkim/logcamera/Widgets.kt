@@ -406,7 +406,7 @@ class ValueDial(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     }
     private val valueP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); textSize = 15f * d; textAlign = Paint.Align.CENTER
-        typeface = android.graphics.Typeface.MONOSPACE
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
     }
     private val arrowP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x66FFFFFF; textSize = 9f * d; textAlign = Paint.Align.CENTER
@@ -419,9 +419,14 @@ class ValueDial(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val longPress = Runnable {
         longFired = true
+        toggleAuto()
+    }
+
+    /** 자동 ↔ 수동 (꾹 누르기, 또는 다른 버튼에서) */
+    fun toggleAuto() {
         if (!canManual) {
             onBlocked?.invoke(title)
-            return@Runnable
+            return
         }
         auto = !auto
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -433,15 +438,16 @@ class ValueDial(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         val rect = RectF(1f * d, 1f * d, width - 1f * d, height - 1f * d)
         canvas.drawRoundRect(rect, r, r, if (auto) bg else bgManual)
         canvas.drawRoundRect(rect, r, r, stroke)
-        canvas.drawText(if (auto) "$title · A" else "$title · M", width / 2f, 13f * d, titleP)
+        // 제목 + 값을 한 덩어리로 보고 칸 정가운데에
+        val titleH = titleP.descent() - titleP.ascent()
+        val valueH = valueP.descent() - valueP.ascent()
+        val gap = 2f * d
+        val top = (height - (titleH + gap + valueH)) / 2f
+        val cx = width / 2f
+        canvas.drawText(if (auto) "$title · A" else "$title · M", cx, top - titleP.ascent(), titleP)
         val v = if (auto) autoText else values.getOrElse(index) { "—" }
         valueP.alpha = if (auto) 170 else 255
-        val cy = height / 2f + 6f * d - (valueP.descent() + valueP.ascent()) / 2f
-        canvas.drawText(v, width / 2f, cy, valueP)
-        if (!auto && values.size > 1) {
-            canvas.drawText("▲", width - 9f * d, height / 2f, arrowP)
-            canvas.drawText("▼", width - 9f * d, height / 2f + 11f * d, arrowP)
-        }
+        canvas.drawText(v, cx, top + titleH + gap - valueP.ascent(), valueP)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

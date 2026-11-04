@@ -287,19 +287,25 @@
 
                 <com.yangkim.logcamera.ValueDial
                     android:id="@+id/dialAperture"
-                    android:layout_width="84dp"
+                    android:layout_width="78dp"
                     android:layout_height="52dp"
                     android:layout_margin="3dp" />
 
                 <com.yangkim.logcamera.ValueDial
                     android:id="@+id/dialShutter"
-                    android:layout_width="84dp"
+                    android:layout_width="78dp"
                     android:layout_height="52dp"
                     android:layout_margin="3dp" />
 
                 <com.yangkim.logcamera.ValueDial
                     android:id="@+id/dialIso"
-                    android:layout_width="84dp"
+                    android:layout_width="78dp"
+                    android:layout_height="52dp"
+                    android:layout_margin="3dp" />
+
+                <com.yangkim.logcamera.ValueDial
+                    android:id="@+id/dialWb"
+                    android:layout_width="78dp"
                     android:layout_height="52dp"
                     android:layout_margin="3dp" />
             </LinearLayout>
