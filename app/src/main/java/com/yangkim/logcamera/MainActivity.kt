@@ -855,16 +855,11 @@ class MainActivity : Activity(), CameraEngine.Callback {
         // 카메라 버튼: 전면 ↔ 후면만
         btnCamera.setOnClickListener { flipFacing() }
 
+        // 썸네일: 앱 안 앨범 (찍은 것 전부, 옆으로 넘기며 보기)
         thumb.setOnClickListener {
-            val u = lastUri ?: return@setOnClickListener
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(u, lastMime)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                })
-            } catch (e: Exception) {
-                toast("갤러리를 열 수 없어요")
-            }
+            startActivity(Intent(this, GalleryActivity::class.java).apply {
+                lastUri?.let { putExtra(GalleryActivity.EXTRA_URI, it.toString()) }
+            })
         }
 
         zoomLever.onChange = { v ->
