@@ -88,7 +88,24 @@ class AvRecorder(private val ctx: Context) {
             vf.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             vf.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             val vc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            vc.configure(vf, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            // 지원하면 High 프로필 (같은 용량에 더 좋은 화질)
+            try {
+                val pls = vc.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
+                val high = pls.filter { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh }.maxByOrNull { it.level }
+                if (high != null) {
+                    vf.setInteger(MediaFormat.KEY_PROFILE, high.profile)
+                    vf.setInteger(MediaFormat.KEY_LEVEL, high.level)
+                }
+            } catch (e: Exception) {}
+            vf.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            try {
+                vc.configure(vf, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            } catch (e: Exception) {
+                // 프로필 설정이 거부되면 기본으로
+                vf.removeKey(MediaFormat.KEY_PROFILE)
+                vf.removeKey(MediaFormat.KEY_LEVEL)
+                vc.configure(vf, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            }
             val surface = vc.createInputSurface()
             vc.start()
             videoCodec = vc

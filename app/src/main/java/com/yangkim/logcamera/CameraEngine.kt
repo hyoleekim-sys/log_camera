@@ -72,6 +72,10 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
         val maxAe: Int,
         val afModes: IntArray,
         val stabModes: IntArray,
+        /** 노이즈 제거·선명도·색번짐 보정 모드 */
+        val nrModes: IntArray = IntArray(0),
+        val edgeModes: IntArray = IntArray(0),
+        val aberrModes: IntArray = IntArray(0),
         /** 이 카메라 안의 실제 렌즈들 (후면 광각/초광각 등). 줌 배율로 전환. */
         val lenses: List<Lens>,
         /** 4K(3840x2160) 스트림이 되면 그 크기, 안 되면 null */
@@ -144,6 +148,16 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
     @Volatile private var lastTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
     @Volatile private var lockedGains: android.hardware.camera2.params.RggbChannelVector? = null
     @Volatile private var lockedTransform: android.hardware.camera2.params.ColorSpaceTransform? = null
+
+    /** 노이즈 제거·선명도·색번짐 보정을 최고 품질로 */
+    private fun setHighQuality(b: CaptureRequest.Builder, c: Cam) {
+        if (c.nrModes.contains(CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+        if (c.edgeModes.contains(CameraMetadata.EDGE_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY)
+        if (c.aberrModes.contains(CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
+    }
 
     /** 수동 색온도 (0 = 자동) */
     @Volatile private var manualKelvin = 0
@@ -300,6 +314,9 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                     maxAe = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0,
                     afModes = c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0),
                     stabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0),
+                    nrModes = c.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES) ?: IntArray(0),
+                    edgeModes = c.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES) ?: IntArray(0),
+                    aberrModes = c.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES) ?: IntArray(0),
                     manualSensor = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR),
                     manualPost = caps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING),
                     apertures = (c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES) ?: FloatArray(0)).toList().sorted(),
@@ -577,7 +594,8 @@ class CameraEngine(private val ctx: Context, private val cb: Callback) {
                 b.addTarget(r.surface)
                 applyCommon(b, c)
                 b.set(CaptureRequest.JPEG_ORIENTATION, orientation)
-                b.set(CaptureRequest.JPEG_QUALITY, 95.toByte())
+                b.set(CaptureRequest.JPEG_QUALITY, 100.toByte())
+                setHighQuality(b, c)
                 s.capture(b.build(), null, handler)
             } catch (e: Exception) {
                 cb.onCameraError("사진 촬영 실패: ${e.message}")

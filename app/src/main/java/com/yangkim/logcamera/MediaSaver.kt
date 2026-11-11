@@ -91,7 +91,25 @@ class VideoRecorder(private val context: Context) {
 
 object PhotoSaver {
     /** JPEG에 보정을 입혀 저장. 보정이 없으면 원본 그대로. */
-    fun save(context: Context, jpeg: ByteArray, lut: FloatArray?): Uri? {
+    /** 원본 카메라 JPEG에서 옮겨 담을 촬영 정보 */
+    private val EXIF_TAGS = listOf(
+        ExifInterface.TAG_DATETIME, ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME_DIGITIZED,
+        ExifInterface.TAG_OFFSET_TIME, ExifInterface.TAG_OFFSET_TIME_ORIGINAL, ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
+        ExifInterface.TAG_SUBSEC_TIME, ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, ExifInterface.TAG_SUBSEC_TIME_DIGITIZED,
+        ExifInterface.TAG_EXPOSURE_TIME, ExifInterface.TAG_F_NUMBER, ExifInterface.TAG_APERTURE_VALUE,
+        ExifInterface.TAG_SHUTTER_SPEED_VALUE, ExifInterface.TAG_ISO_SPEED_RATINGS,
+        ExifInterface.TAG_FOCAL_LENGTH, ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+        ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ExifInterface.TAG_EXPOSURE_PROGRAM, ExifInterface.TAG_EXPOSURE_MODE,
+        ExifInterface.TAG_WHITE_BALANCE, ExifInterface.TAG_METERING_MODE, ExifInterface.TAG_FLASH,
+        ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_LENS_MAKE, ExifInterface.TAG_LENS_MODEL,
+        ExifInterface.TAG_BRIGHTNESS_VALUE, ExifInterface.TAG_DIGITAL_ZOOM_RATIO, ExifInterface.TAG_SCENE_CAPTURE_TYPE
+    )
+
+    /** 촬영 당시 앱 설정 (사진 정보에 기록) */
+    class ShotInfo(val description: String, val focal35: Int)
+
+    fun save(context: Context, jpeg: ByteArray, lut: FloatArray?, info: ShotInfo? = null): Uri? {
+        val original = try { ExifInterface(ByteArrayInputStream(jpeg)) } catch (e: Exception) { null }
         val data: ByteArray = if (lut == null) jpeg else {
             val rot = try {
                 when (ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(
@@ -112,7 +130,7 @@ object PhotoSaver {
                 bmp = r
             }
             val out = java.io.ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            bmp.compress(Bitmap.CompressFormat.JPEG, 98, out)
             bmp.recycle()
             out.toByteArray()
         }
@@ -127,6 +145,24 @@ object PhotoSaver {
             ?: return null
         return try {
             resolver.openOutputStream(uri)?.use { it.write(data) }
+            // 촬영 정보 기록
+            try {
+                resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                    val ex = ExifInterface(pfd.fileDescriptor)
+                    if (lut != null && original != null) {
+                        for (t in EXIF_TAGS) original.getAttribute(t)?.let { ex.setAttribute(t, it) }
+                        ex.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                    }
+                    ex.setAttribute(ExifInterface.TAG_SOFTWARE, "ProCamera")
+                    if (info != null) {
+                        ex.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, info.description)
+                        if (info.focal35 > 0 && ex.getAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM) == null) {
+                            ex.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, info.focal35.toString())
+                        }
+                    }
+                    ex.saveAttributes()
+                }
+            } catch (e: Exception) {}
             resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
             uri
         } catch (e: Exception) {

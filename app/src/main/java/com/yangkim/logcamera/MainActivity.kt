@@ -425,10 +425,10 @@ class MainActivity : Activity(), CameraEngine.Callback {
 
     /** 녹화 비트레이트 */
     private fun bitrate(): Int = when {
-        res4k && fps >= 60 -> 80_000_000
-        res4k -> 50_000_000
-        fps >= 60 -> 30_000_000
-        else -> 20_000_000
+        res4k && fps >= 60 -> 100_000_000
+        res4k -> 72_000_000
+        fps >= 60 -> 45_000_000
+        else -> 30_000_000
     }
 
     /** 이 폰의 H.264 인코더가 이 크기를 녹화할 수 있는지 */
@@ -1419,10 +1419,33 @@ class MainActivity : Activity(), CameraEngine.Callback {
         }
     }
 
+    /** 사진 정보에 남길 앱 설정 (영문·숫자로) */
+    private fun shotInfo(): PhotoSaver.ShotInfo {
+        val c = cam
+        val mm = if (c != null) (c.eq1 * zoom).roundToInt() else 0
+        val parts = ArrayList<String>()
+        parts.add("ProCamera")
+        if (mm > 0) parts.add("${mm}mm(35mm eq) ${String.format(Locale.US, "%.1f", zoom)}x")
+        if (lastExp > 0) parts.add(if (lastExp >= 300_000_000L) String.format(Locale.US, "%.1fs", lastExp / 1e9) else "1/${(1e9 / lastExp).roundToInt()}s")
+        if (lastIso > 0) parts.add("ISO$lastIso")
+        parts.add(when {
+            !dialWb.auto -> "WB ${kelvinChoices.getOrElse(dialWb.index) { 5000 }}K manual"
+            engine.awbLock -> "WB lock"
+            else -> "AWB" + if (lastK > 0) " ~${lastK}K" else ""
+        })
+        if (evSteps != 0) parts.add(String.format(Locale.US, "EV%+.1f", evValue()))
+        parts.add((if (shutterManual) "S:M" else "S:A") + " " + (if (isoManual) "ISO:M" else "ISO:A"))
+        if (aspect43) parts.add("4:3") else parts.add("16:9")
+        if (!currentGrade.isNeutral) parts.add("grade on")
+        if (c?.front == true && lightLevel > 0) parts.add("screen light $lightLevel/5")
+        return PhotoSaver.ShotInfo(parts.joinToString(" | "), mm)
+    }
+
     override fun onJpeg(bytes: ByteArray) {
         val lut = if (currentGrade.isNeutral) null else currentLut
+        val info = shotInfo()
         worker.execute {
-            val uri = try { PhotoSaver.save(this, bytes, lut) } catch (e: Throwable) { null }
+            val uri = try { PhotoSaver.save(this, bytes, lut, info) } catch (e: Throwable) { null }
             runOnUiThread {
                 if (uri != null) {
                     lastUri = uri

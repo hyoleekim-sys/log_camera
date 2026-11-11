@@ -178,6 +178,7 @@ class GalleryActivity : Activity() {
             setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
         }
         top.addView(counter, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(chip("정보") { showInfo() })
         top.addView(chip("공유") { shareCurrent() })
         top.addView(chip("갤러리") { openExternal() })
         viewer.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
@@ -247,6 +248,42 @@ class GalleryActivity : Activity() {
     private fun fmtDur(ms: Long): String {
         val s = ms / 1000
         return String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60)
+    }
+
+    /** 촬영 정보 보기 */
+    private fun showInfo() {
+        val it = items.getOrNull(current) ?: return
+        if (it.video) {
+            android.app.AlertDialog.Builder(this).setTitle("영상 정보")
+                .setMessage("길이 ${fmtDur(it.durationMs)}").setPositiveButton("닫기", null).show()
+            return
+        }
+        val lines = ArrayList<String>()
+        try {
+            contentResolver.openInputStream(it.uri)?.use { ins ->
+                val ex = android.media.ExifInterface(ins)
+                fun g(t: String) = ex.getAttribute(t)
+                g(android.media.ExifInterface.TAG_DATETIME_ORIGINAL)?.let { v -> lines.add("촬영 시각  $v") }
+                val w = g(android.media.ExifInterface.TAG_IMAGE_WIDTH)
+                val h = g(android.media.ExifInterface.TAG_IMAGE_LENGTH)
+                if (w != null && h != null) lines.add("크기  ${w} × ${h}")
+                ex.getAttributeDouble(android.media.ExifInterface.TAG_EXPOSURE_TIME, 0.0).let { e ->
+                    if (e > 0) lines.add("셔터  " + if (e >= 0.3) String.format(java.util.Locale.US, "%.1f초", e) else "1/${Math.round(1 / e)}")
+                }
+                g(android.media.ExifInterface.TAG_ISO_SPEED_RATINGS)?.let { v -> lines.add("ISO  $v") }
+                g(android.media.ExifInterface.TAG_F_NUMBER)?.let { v -> lines.add("조리개  f/$v") }
+                ex.getAttributeDouble(android.media.ExifInterface.TAG_FOCAL_LENGTH, 0.0).let { f ->
+                    if (f > 0) lines.add(String.format(java.util.Locale.US, "초점거리  %.1fmm", f))
+                }
+                g(android.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let { v -> lines.add("35mm 환산  ${v}mm") }
+                g(android.media.ExifInterface.TAG_EXPOSURE_BIAS_VALUE)?.let { v -> lines.add("노출 보정  $v") }
+                g(android.media.ExifInterface.TAG_MODEL)?.let { v -> lines.add("기기  $v") }
+                g(android.media.ExifInterface.TAG_IMAGE_DESCRIPTION)?.let { v -> lines.add("\n앱 설정\n" + v.replace(" | ", "\n")) }
+            }
+        } catch (e: Exception) {}
+        android.app.AlertDialog.Builder(this).setTitle("촬영 정보")
+            .setMessage(if (lines.isEmpty()) "촬영 정보가 없어요" else lines.joinToString("\n"))
+            .setPositiveButton("닫기", null).show()
     }
 
     private fun shareCurrent() {
